@@ -58,7 +58,7 @@ class PatternManager {
 				'not_found'          => __( 'No patterns found', 'block-theme-developer' ),
 				'not_found_in_trash' => __( 'No patterns found in trash', 'block-theme-developer' ),
 			],
-			'public'              => true,
+			'public'              => false,
 			'publicly_queryable'  => false,
 			'exclude_from_search' => true,
 			'show_ui'             => true,
@@ -69,7 +69,8 @@ class PatternManager {
 			'rest_base'           => 'btd-patterns',
 			'menu_position'       => 25,
 			'menu_icon'           => 'dashicons-layout',
-			'capability_type'     => 'post',
+			'capability_type'     => [ 'btd_pattern', 'btd_patterns' ],
+			'map_meta_cap'        => true,
 			'hierarchical'        => false,
 			'supports'            => [ 'title', 'editor', 'custom-fields' ],
 			'has_archive'         => false,
@@ -79,7 +80,6 @@ class PatternManager {
 
 		register_post_type( 'btd_pattern', $args );
 	}
-
 
 	/**
 	 * Register meta fields for patterns
@@ -161,7 +161,7 @@ class PatternManager {
 					'schema' => $rest_schema,
 				],
 				'auth_callback'     => function() {
-					return current_user_can( 'edit_posts' );
+					return current_user_can( 'edit_btd_patterns' );
 				},
 				'sanitize_callback' => $args['type'] === 'array' ? [ $this, 'sanitize_array_meta' ] : null,
 			] );
@@ -427,13 +427,15 @@ class PatternManager {
 
 	/**
 	 * Add admin menu for pattern management
+	 *
+	 * @return void
 	 */
 	public function add_admin_menu(): void {
 		add_submenu_page(
 			'edit.php?post_type=btd_pattern',
 			__( 'Import Theme Patterns', 'block-theme-developer' ),
 			__( 'Import Patterns', 'block-theme-developer' ),
-			'edit_posts',
+			'edit_btd_patterns',
 			'btd-import-patterns',
 			[ $this, 'admin_page_import_patterns' ]
 		);
@@ -441,6 +443,8 @@ class PatternManager {
 
 	/**
 	 * Display admin notices for import results
+	 *
+	 * @return void
 	 */
 	public function display_import_notices(): void {
 		// Only show notices on the import page
@@ -468,6 +472,8 @@ class PatternManager {
 
 	/**
 	 * Admin page for pattern import
+	 *
+	 * @return void
 	 */
 	public function admin_page_import_patterns(): void {
 		$theme_patterns = FileOperations::instance()->get_theme_pattern_files();
@@ -590,6 +596,8 @@ class PatternManager {
 
 	/**
 	 * Maybe auto-import patterns on plugin activation
+	 *
+	 * @return void
 	 */
 	public function maybe_auto_import_patterns(): void {
 		// Only auto-import in development environments and if no patterns exist yet
@@ -820,11 +828,13 @@ class PatternManager {
 
 	/**
 	 * AJAX handler for pattern import
+	 *
+	 * @return void
 	 */
 	public function ajax_import_patterns(): void {
 		check_ajax_referer( 'btd_import_patterns', 'nonce' );
 
-		if ( ! current_user_can( 'edit_posts' ) ) {
+		if ( ! current_user_can( 'edit_btd_patterns' ) ) {
 			wp_die( 'Unauthorized' );
 		}
 
