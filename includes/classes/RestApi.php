@@ -228,6 +228,8 @@ class RestApi {
 			'postTypes'     => $this->ensure_array( $metadata['_btd_post_types'] ),
 			'templateTypes' => $this->ensure_array( $metadata['_btd_template_types'] ),
 			'inserter'      => (bool) $metadata['_btd_inserter'],
+			'lastUpdated'   => $post->post_modified,
+			'created'       => $post->post_date,
 		];
 
 		return $pattern_data;
