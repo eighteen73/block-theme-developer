@@ -31,6 +31,7 @@ class PatternManager {
 		add_action( 'rest_after_insert_btd_pattern', [ $this, 'save_pattern_rest' ], 10, 3 );
 
 		add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
+		add_action( 'admin_notices', [ $this, 'display_import_notices' ] );
 		add_action( 'wp_ajax_btd_import_patterns', [ $this, 'ajax_import_patterns' ] );
 
 		// Auto-import on plugin activation (only in development)
@@ -427,11 +428,37 @@ class PatternManager {
 	}
 
 	/**
+	 * Display admin notices for import results
+	 */
+	public function display_import_notices(): void {
+		// Only show notices on the import page
+		$current_screen = get_current_screen();
+		if ( ! $current_screen || 'btd_pattern_page_btd-import-patterns' !== $current_screen->id ) {
+			return;
+		}
+
+		// Check for import results in URL parameters (from redirect)
+		if ( isset( $_GET['import_success'] ) ) {
+			$count = intval( $_GET['import_success'] );
+			echo '<div class="notice notice-success is-dismissible"><p>' .
+				sprintf( esc_html__( 'Successfully imported %d patterns', 'block-theme-developer' ), $count ) .
+				'</p></div>';
+		}
+
+		if ( isset( $_GET['import_errors'] ) ) {
+			$errors = explode( '|', sanitize_text_field( $_GET['import_errors'] ) );
+			echo '<div class="notice notice-error is-dismissible"><p>' .
+				esc_html__( 'Some patterns failed to import:', 'block-theme-developer' ) .
+				'<br>' . implode( '<br>', array_map( 'esc_html', $errors ) ) .
+				'</p></div>';
+		}
+	}
+
+	/**
 	 * Admin page for pattern import
 	 */
 	public function admin_page_import_patterns(): void {
 		$theme_patterns = FileOperations::instance()->get_theme_pattern_files();
-		$imported_count = 0;
 		$existing_count = 0;
 
 		// Check which patterns already exist
@@ -529,18 +556,23 @@ class PatternManager {
 			$patterns_to_import = $_POST['import_patterns'] ?? [];
 			$import_results     = $this->import_pattern_files( $patterns_to_import );
 
+			// Build redirect URL with results
+			$redirect_url = add_query_arg( [
+				'post_type' => 'btd_pattern',
+				'page'      => 'btd-import-patterns',
+			], admin_url( 'edit.php' ) );
+
 			if ( ! empty( $import_results['success'] ) ) {
-				echo '<div class="notice notice-success"><p>' .
-					sprintf( esc_html__( 'Successfully imported %d patterns!', 'block-theme-developer' ), count( $import_results['success'] ) ) .
-					'</p></div>';
+				$redirect_url = add_query_arg( 'import_success', count( $import_results['success'] ), $redirect_url );
 			}
 
 			if ( ! empty( $import_results['errors'] ) ) {
-				echo '<div class="notice notice-error"><p>' .
-					esc_html__( 'Some patterns failed to import:', 'block-theme-developer' ) .
-					'<br>' . implode( '<br>', array_map( 'esc_html', $import_results['errors'] ) ) .
-					'</p></div>';
+				$redirect_url = add_query_arg( 'import_errors', implode( '|', $import_results['errors'] ), $redirect_url );
 			}
+
+			// Redirect to prevent form resubmission
+			wp_redirect( $redirect_url );
+			exit;
 		}
 	}
 
