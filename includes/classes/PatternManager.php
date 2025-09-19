@@ -212,11 +212,13 @@ class PatternManager {
 		$pattern_categories = $this->get_pattern_categories_slugs();
 		$post_types         = $this->get_public_post_types();
 		$block_types        = $this->get_available_block_types();
+		$template_types     = $this->get_available_template_types();
 
 		wp_localize_script( 'btd-pattern-sidebar', 'btdData', [
 			'patternCategories' => $pattern_categories,
 			'postTypes'         => $post_types,
 			'blockTypes'        => $block_types,
+			'templateTypes'     => $template_types,
 		] );
 
 		// Localize script with environment data
@@ -269,7 +271,7 @@ class PatternManager {
 	 *
 	 * @return array Array of block type slugs.
 	 */
-	private function get_available_block_types(): array {
+	public function get_available_block_types(): array {
 		$block_types = [];
 
 		// Create block editor context for site editor to get all available blocks
@@ -308,6 +310,16 @@ class PatternManager {
 		return $block_types;
 	}
 
+		/**
+	 * Get all available block template types
+	 *
+	 * @return array Array of block template type slugs.
+	 */
+	public function get_available_template_types(): array {
+		$template_types = get_default_block_template_types();
+
+		return $template_types;
+	}
 
 	/**
 	 * Handle pattern save operations for REST API requests

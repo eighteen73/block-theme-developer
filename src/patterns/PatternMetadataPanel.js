@@ -42,10 +42,11 @@ export default function PatternMetadataPanel() {
 		};
 	}, [] );
 
-	// Get pattern categories, post types, and block types from localized data
+	// Get pattern categories, post types, block types, and template types from localized data
 	const [ coreCategories, setCoreCategories ] = useState( [] );
 	const [ postTypes, setPostTypes ] = useState( [] );
 	const [ blockTypes, setBlockTypes ] = useState( [] );
+	const [ templateTypes, setTemplateTypes ] = useState( [] );
 
 	useEffect( () => {
 		// Use data passed via wp_localize_script (more reliable than REST API)
@@ -53,8 +54,9 @@ export default function PatternMetadataPanel() {
 			setCoreCategories( window.btdData.patternCategories || [] );
 			setPostTypes( window.btdData.postTypes || [] );
 			setBlockTypes( window.btdData.blockTypes || [] );
+			setTemplateTypes( window.btdData.templateTypes || [] );
 		} else {
-			// Fallback to REST API if localized data isn't available
+			// Fallback to WordPress core endpoints if localized data isn't available
 			Promise.all( [
 				apiFetch( { path: '/wp/v2/block-patterns/categories' } ),
 				apiFetch( { path: '/wp/v2/types' } )
@@ -74,6 +76,7 @@ export default function PatternMetadataPanel() {
 					setCoreCategories( [] );
 					setPostTypes( [] );
 					setBlockTypes( [] );
+					setTemplateTypes( [] );
 				} );
 		}
 	}, [] );
@@ -118,6 +121,7 @@ export default function PatternMetadataPanel() {
 					value={ metadata.description }
 					onChange={ ( value ) => updateMetadata( 'description', value ) }
 					help={ __( 'A brief description of what this pattern does.', 'block-theme-developer' ) }
+					__nextHasNoMarginBottom
 				/>
 			</PanelRow>
 
@@ -133,6 +137,7 @@ export default function PatternMetadataPanel() {
 						suggestions={ coreCategories }
 						onChange={ ( tokens ) => updateMetadata( 'categories', tokensToStringArray( tokens ) ) }
 						help={ __( 'Select from WordPress core pattern categories.', 'block-theme-developer' ) }
+						__nextHasNoMarginBottom
 					/>
 				</div>
 			</PanelRow>
@@ -145,6 +150,8 @@ export default function PatternMetadataPanel() {
 						value={ stringArrayToTokens( metadata.keywords ) }
 						onChange={ ( tokens ) => updateMetadata( 'keywords', tokensToStringArray( tokens ) ) }
 						help={ __( 'Keywords to help users find this pattern.', 'block-theme-developer' ) }
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
 					/>
 				</div>
 			</PanelRow>
@@ -155,13 +162,13 @@ export default function PatternMetadataPanel() {
 						id="btd-block-types"
 						label={ __( 'Block Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.blockTypes ) }
-						_experimentalAutoSelectFirstMatch
-						__experimentalExpandOnFocus
-						__next40pxDefaultSize
 						suggestions={ blockTypes }
 						onChange={ ( tokens ) => updateMetadata( 'block_types', tokensToStringArray( tokens ) ) }
 						help={ __( 'Select from available block types and template part areas.', 'block-theme-developer' ) }
-					/>
+						__experimentalExpandOnFocus
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
+						/>
 				</div>
 			</PanelRow>
 
@@ -171,12 +178,12 @@ export default function PatternMetadataPanel() {
 						id="btd-post-types"
 						label={ __( 'Post Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.postTypes ) }
-						_experimentalAutoSelectFirstMatch
-						__experimentalExpandOnFocus
-						__next40pxDefaultSize
 						suggestions={ postTypes }
 						onChange={ ( tokens ) => updateMetadata( 'post_types', tokensToStringArray( tokens ) ) }
 						help={ __( 'Select from registered post types.', 'block-theme-developer' ) }
+						__experimentalExpandOnFocus
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
 					/>
 				</div>
 			</PanelRow>
@@ -188,7 +195,11 @@ export default function PatternMetadataPanel() {
 						label={ __( 'Template Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.templateTypes ) }
 						onChange={ ( tokens ) => updateMetadata( 'template_types', tokensToStringArray( tokens ) ) }
+						suggestions={ Object.keys( templateTypes ).map( slug => templateTypes[ slug ]?.title || slug ) }
 						help={ __( 'Template types this pattern is designed for.', 'block-theme-developer' ) }
+						__experimentalExpandOnFocus
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
 					/>
 				</div>
 			</PanelRow>
@@ -200,6 +211,8 @@ export default function PatternMetadataPanel() {
 					value={ metadata.viewportWidth }
 					onChange={ ( value ) => updateMetadata( 'viewport_width', parseInt( value, 10 ) || 1200 ) }
 					help={ __( 'Suggested viewport width for displaying this pattern.', 'block-theme-developer' ) }
+					__next40pxDefaultSize
+					__nextHasNoMarginBottom
 				/>
 			</PanelRow>
 
@@ -209,6 +222,7 @@ export default function PatternMetadataPanel() {
 					checked={ metadata.inserter }
 					onChange={ ( value ) => updateMetadata( 'inserter', value ) }
 					help={ __( 'Whether this pattern should appear in the pattern inserter.', 'block-theme-developer' ) }
+					__nextHasNoMarginBottom
 				/>
 			</PanelRow>
 		</PluginDocumentSettingPanel>
