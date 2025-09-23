@@ -1,0 +1,1 @@
+(()=>{"use strict";(0,window.wp.plugins.registerPlugin)("btd-template-export",{render:function(){return null}})})();
