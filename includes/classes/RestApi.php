@@ -25,9 +25,10 @@ class RestApi {
 	 * Initialize the class
 	 */
 	public function __construct() {
-		// Only register routes when in API mode
+		// Only register routes and setup capabilities when in API mode
 		if ( 'api' === BLOCK_THEME_DEVELOPER_MODE ) {
 			add_action( 'rest_api_init', [ $this, 'register_routes' ] );
+			add_action( 'init', [ $this, 'setup_api_capabilities' ] );
 		}
 	}
 
@@ -72,6 +73,35 @@ class RestApi {
 				'permission_callback' => '__return_true', // Public endpoint for auth info
 			]
 		);
+	}
+
+	/**
+	 * Setup API capabilities and role when in API mode
+	 *
+	 * @return void
+	 */
+	public function setup_api_capabilities(): void {
+		$capability = 'btd_api_access';
+		$admin_role = get_role( 'administrator' );
+
+		if ( $admin_role ) {
+			$admin_role->add_cap( $capability );
+		}
+
+		$api_user_role = get_role( 'api_user' );
+
+		if ( ! $api_user_role ) {
+			add_role(
+				'api_user',
+				__( 'API User', 'block-theme-developer' ),
+				[
+					'read' => true,
+					$capability => true,
+				]
+			);
+		} else {
+			$api_user_role->add_cap( $capability );
+		}
 	}
 
 	/**

@@ -158,7 +158,12 @@ GET /wp-json/btd/v1/auth-info
 5. Copy the generated username and password
 6. Use these credentials for HTTP Basic Authentication
 
-**Important:** The user must have the `btd_api_access` capability to access the API. You can assign this capability to other users or roles using a plugin like User Role Editor.
+**Important:** The user must have the `btd_api_access` capability to access the API. When in API mode, the plugin automatically:
+- Creates the `btd_api_access` capability
+- Creates an `API User` role with this capability
+- Assigns the capability to administrators
+
+You can assign this capability to other users or roles using a plugin like User Role Editor.
 
 #### Example Usage
 
