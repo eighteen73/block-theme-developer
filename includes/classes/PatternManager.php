@@ -194,42 +194,39 @@ class PatternManager {
 			return;
 		}
 
-		wp_enqueue_script(
-			'btd-pattern-sidebar',
-			BLOCK_THEME_DEVELOPER_URL . 'build/patterns.js',
-			[
-				'wp-plugins',
-				'wp-edit-post',
-				'wp-element',
-				'wp-components',
-				'wp-data',
-				'wp-i18n',
-			],
-			'1.0.0',
-			true
-		);
+		$sidebar_asset = include BLOCK_THEME_DEVELOPER_PATH . 'build/patterns.asset.php';
 
-		$pattern_categories = $this->get_pattern_categories_slugs();
-		$post_types         = $this->get_public_post_types();
-		$block_types        = $this->get_available_block_types();
-		$template_types     = $this->get_available_template_types();
+		if ( $sidebar_asset ) {
+			wp_enqueue_script(
+				'btd-pattern-sidebar',
+				BLOCK_THEME_DEVELOPER_URL . 'build/patterns.js',
+				$sidebar_asset['dependencies'],
+				$sidebar_asset['version'],
+				true
+			);
 
-		wp_localize_script( 'btd-pattern-sidebar', 'btdData', [
-			'patternCategories' => $pattern_categories,
-			'postTypes'         => $post_types,
-			'blockTypes'        => $block_types,
-			'templateTypes'     => $template_types,
-		] );
+			$pattern_categories = $this->get_pattern_categories_slugs();
+			$post_types         = $this->get_public_post_types();
+			$block_types        = $this->get_available_block_types();
+			$template_types     = $this->get_available_template_types();
 
-		// Localize script with environment data
-		wp_localize_script(
-			'btd-pattern-sidebar',
-			'btdPatterns',
-			[
-				'environment' => wp_get_environment_type(),
-				'mode'        => BLOCK_THEME_DEVELOPER_MODE,
-			]
-		);
+			wp_localize_script( 'btd-pattern-sidebar', 'btdData', [
+				'patternCategories' => $pattern_categories,
+				'postTypes'         => $post_types,
+				'blockTypes'        => $block_types,
+				'templateTypes'     => $template_types,
+			] );
+
+			// Localize script with environment data
+			wp_localize_script(
+				'btd-pattern-sidebar',
+				'btdPatterns',
+				[
+					'environment' => wp_get_environment_type(),
+					'mode'        => BLOCK_THEME_DEVELOPER_MODE,
+				]
+			);
+		}
 	}
 
 	/**
