@@ -113,6 +113,7 @@ export default function PatternMetadataPanel() {
 	return (
 		<PluginDocumentSettingPanel
 			name="btd-pattern-metadata"
+			title={ __( 'Pattern Metadata', 'block-theme-developer' ) }
 			className="btd-pattern-metadata-panel"
 		>
 			<PanelRow>

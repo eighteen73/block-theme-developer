@@ -39,6 +39,46 @@ class PatternManager {
 	}
 
 	/**
+	 * Check if the plugin is in file mode
+	 *
+	 * @return bool True if in file mode, false otherwise
+	 */
+	public static function is_file_mode(): bool {
+		return 'file' === BLOCK_THEME_DEVELOPER_MODE;
+	}
+
+	/**
+	 * Check if the plugin is in API mode
+	 *
+	 * @return bool True if in API mode, false otherwise
+	 */
+	public static function is_api_mode(): bool {
+		return 'api' === BLOCK_THEME_DEVELOPER_MODE;
+	}
+
+	/**
+	 * Handle plugin activation
+	 *
+	 * @return void
+	 */
+	public static function on_activation(): void {
+		$roles = [ 'administrator' ];
+
+		foreach ( $roles as $role_name ) {
+			$role = get_role( $role_name );
+			if ( $role ) {
+				$role->add_cap( 'edit_btd_patterns' );
+				$role->add_cap( 'edit_btd_pattern' );
+				$role->add_cap( 'read_btd_pattern' );
+				$role->add_cap( 'delete_btd_pattern' );
+				$role->add_cap( 'publish_btd_patterns' );
+			}
+		}
+
+		flush_rewrite_rules();
+	}
+
+	/**
 	 * Register the btd_pattern custom post type
 	 *
 	 * @return void
@@ -331,7 +371,7 @@ class PatternManager {
 		}
 
 		// Handle file mode
-		if ( 'file' === BLOCK_THEME_DEVELOPER_MODE ) {
+		if ( self::is_file_mode() ) {
 			FileOperations::instance()->save_pattern_to_file( $post->ID );
 		}
 	}
@@ -374,7 +414,7 @@ class PatternManager {
 		}
 
 		// Handle file mode
-		if ( 'file' === BLOCK_THEME_DEVELOPER_MODE ) {
+		if ( self::is_file_mode() ) {
 			FileOperations::instance()->save_pattern_to_file( $post_id );
 		}
 	}
@@ -428,14 +468,17 @@ class PatternManager {
 	 * @return void
 	 */
 	public function add_admin_menu(): void {
-		add_submenu_page(
-			'edit.php?post_type=btd_pattern',
-			__( 'Import Theme Patterns', 'block-theme-developer' ),
-			__( 'Import Patterns', 'block-theme-developer' ),
-			'edit_btd_patterns',
-			'btd-import-patterns',
-			[ $this, 'admin_page_import_patterns' ]
-		);
+		// Only show import functionality in file mode
+		if ( self::is_file_mode() ) {
+			add_submenu_page(
+				'edit.php?post_type=btd_pattern',
+				__( 'Import Theme Patterns', 'block-theme-developer' ),
+				__( 'Import Patterns', 'block-theme-developer' ),
+				'edit_btd_patterns',
+				'btd-import-patterns',
+				[ $this, 'admin_page_import_patterns' ]
+			);
+		}
 	}
 
 	/**
@@ -597,6 +640,11 @@ class PatternManager {
 	 * @return void
 	 */
 	public function maybe_auto_import_patterns(): void {
+		// Only auto-import in file mode and development environments
+		if ( ! self::is_file_mode() ) {
+			return;
+		}
+
 		// Only auto-import in development environments and if no patterns exist yet
 		if ( ! in_array( wp_get_environment_type(), [ 'development', 'local' ], true ) ) {
 			return;
@@ -816,7 +864,7 @@ class PatternManager {
 		update_post_meta( $post_id, '_btd_categories', $pattern_data['categories'] );
 
 		// Generate the pattern file after metadata is saved
-		if ( 'file' === BLOCK_THEME_DEVELOPER_MODE ) {
+		if ( self::is_file_mode() ) {
 			FileOperations::instance()->save_pattern_to_file( $post_id );
 		}
 
@@ -829,6 +877,11 @@ class PatternManager {
 	 * @return void
 	 */
 	public function ajax_import_patterns(): void {
+		// Only allow import in file mode
+		if ( ! self::is_file_mode() ) {
+			wp_die( 'Import functionality not available in API mode' );
+		}
+
 		check_ajax_referer( 'btd_import_patterns', 'nonce' );
 
 		if ( ! current_user_can( 'edit_btd_patterns' ) ) {
@@ -836,7 +889,7 @@ class PatternManager {
 		}
 
 		$pattern_files = $_POST['pattern_files'] ?? [];
-		$results = $this->import_pattern_files( $pattern_files );
+		$results       = $this->import_pattern_files( $pattern_files );
 
 		wp_send_json_success( $results );
 	}
