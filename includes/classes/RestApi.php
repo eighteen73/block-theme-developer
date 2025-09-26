@@ -95,7 +95,7 @@ class RestApi {
 				'api_user',
 				__( 'API User', 'block-theme-developer' ),
 				[
-					'read' => true,
+					'read'      => true,
 					$capability => true,
 				]
 			);
@@ -180,7 +180,11 @@ class RestApi {
 	 */
 	public function get_auth_info() {
 		$info = $this->get_application_passwords_info();
-		return rest_ensure_response( $info );
+		$response = rest_ensure_response( $info );
+
+		$this->add_cache_busting_headers( $response );
+
+		return $response;
 	}
 
 	/**
@@ -231,6 +235,8 @@ class RestApi {
 		$response = rest_ensure_response( $patterns );
 		$response->header( 'X-WP-Total', $query->found_posts );
 		$response->header( 'X-WP-TotalPages', $query->max_num_pages );
+
+		$this->add_cache_busting_headers( $response );
 
 		return $response;
 	}
@@ -286,5 +292,24 @@ class RestApi {
 		}
 
 		return [ $value ];
+	}
+
+	/**
+	 * Add cache-busting headers to prevent caching
+	 *
+	 * @param WP_REST_Response $response The response object.
+	 * @return void
+	 */
+	private function add_cache_busting_headers( $response ): void {
+		// Prevent caching at all levels
+		$response->header( 'Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0' );
+		$response->header( 'Pragma', 'no-cache' );
+		$response->header( 'Expires', '0' );
+
+		// Add ETag with timestamp to ensure uniqueness
+		$response->header( 'ETag', '"' . time() . '-' . wp_rand( 1000, 9999 ) . '"' );
+
+		// Add Last-Modified header with current timestamp
+		$response->header( 'Last-Modified', gmdate( 'D, d M Y H:i:s' ) . ' GMT' );
 	}
 }
