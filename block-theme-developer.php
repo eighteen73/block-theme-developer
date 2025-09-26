@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Block Theme Developer
  * Description:       A developer focused companion plugin for building block themes for WordPress.
- * Version:           1.1.0
+ * Version:           1.1.1
  * Requires at least: 6.8
  * Requires PHP:      8.3
  * Author:            eighteen73
