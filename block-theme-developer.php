@@ -38,6 +38,7 @@ require_once 'autoload.php';
 PatternManager::instance();
 FileOperations::instance();
 RestApi::instance();
+TemplateExportManager::instance();
 
 // Activation hook to set capabilities
 register_activation_hook( __FILE__, [ PatternManager::class, 'on_activation' ] );

@@ -21,9 +21,14 @@ A developer-focused plugin for developing block themes for WordPress. This plugi
   - Template Types
   - Inserter Visibility
 
-### Part 2: Template Export (Coming Soon)
+### Part 2: Template Export
 
-Template and template part export functionality will be implemented in a future update.
+- **Automatic Template Export in File Mode**:
+  - Exports `wp_template` changes to your active stylesheet theme `/templates` directory as `.html`
+  - Exports `wp_template_part` changes to your active stylesheet theme `/parts` directory as `.html`
+- **Strict Development Guardrails**:
+  - In `file` mode, successful template exports remove DB overrides so file changes remain the source of truth
+  - Helps prevent accidental long-lived template data in the database during development
 
 ## Installation
 
@@ -81,6 +86,26 @@ When working with existing themes that have pattern files, you can import them i
 5. Your changes will automatically update the theme files when you save
 
 **Auto-Import**: In development environments, the plugin automatically imports any existing theme patterns when first activated.
+
+### Exporting Templates and Template Parts
+
+In **file mode**, saving templates from the Site Editor exports changes directly to the active stylesheet theme:
+
+- Templates: `/templates/{slug}.html`
+- Template parts: `/parts/{slug}.html`
+
+When export succeeds, the plugin removes the corresponding database override so local development stays file-first.
+
+#### Important Notes
+
+- Autosaves, revisions, and draft-like states are skipped by guardrails.
+- Export requires users with `edit_theme_options` capability.
+- Filesystem write access must be available to WordPress.
+
+#### Troubleshooting
+
+- Enable `WP_DEBUG_LOG` in your WordPress environment to review export logs.
+- Failed exports keep DB content intact (no cleanup is performed).
 
 ## Development Workflow
 

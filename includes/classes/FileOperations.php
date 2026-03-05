@@ -64,6 +64,35 @@ class FileOperations {
 	}
 
 	/**
+	 * Save template or template part to a theme file.
+	 *
+	 * @param int $post_id The post ID.
+	 * @return bool True on success, false on failure.
+	 */
+	public function save_template_to_file( int $post_id ): bool {
+		$post = get_post( $post_id );
+		if ( ! $post || ! in_array( $post->post_type, [ 'wp_template', 'wp_template_part' ], true ) ) {
+			return false;
+		}
+
+		$file_path = $this->get_template_file_path( $post );
+		if ( ! $file_path ) {
+			return false;
+		}
+
+		if ( ! $this->ensure_directory_exists( dirname( $file_path ) ) ) {
+			return false;
+		}
+
+		$content = (string) $post->post_content;
+		if ( '' !== $content && ! str_ends_with( $content, "\n" ) ) {
+			$content .= "\n";
+		}
+
+		return $this->write_file( $file_path, $content );
+	}
+
+	/**
 	 * Ensure directory exists
 	 *
 	 * @param string $dir_path The directory path.
@@ -80,6 +109,85 @@ class FileOperations {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Build an absolute theme file path for template exports.
+	 *
+	 * @param WP_Post $post The template post object.
+	 * @return string|false Absolute file path or false on failure.
+	 */
+	public function get_template_file_path( $post ) {
+		if ( ! $post || ! in_array( $post->post_type, [ 'wp_template', 'wp_template_part' ], true ) ) {
+			return false;
+		}
+
+		$directory = $this->get_theme_template_directory( $post->post_type );
+		if ( ! $directory ) {
+			return false;
+		}
+
+		$slug = $this->normalize_template_slug( (string) $post->post_name );
+		if ( '' === $slug ) {
+			return false;
+		}
+
+		return trailingslashit( $directory ) . $slug . '.html';
+	}
+
+	/**
+	 * Get the active stylesheet template directory by template post type.
+	 *
+	 * @param string $post_type The post type.
+	 * @return string|false Directory path or false for unsupported type.
+	 */
+	public function get_theme_template_directory( string $post_type ) {
+		$theme_dir = get_stylesheet_directory();
+
+		if ( 'wp_template' === $post_type ) {
+			return trailingslashit( $theme_dir . '/templates' );
+		}
+
+		if ( 'wp_template_part' === $post_type ) {
+			return trailingslashit( $theme_dir . '/parts' );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Normalize a template post_name into a safe theme file slug.
+	 *
+	 * @param string $post_name The template post_name.
+	 * @return string Normalized slug relative to the templates/parts directory.
+	 */
+	public function normalize_template_slug( string $post_name ): string {
+		$slug = trim( $post_name );
+
+		// Core template post names include `theme-slug//template-slug`.
+		if ( false !== strpos( $slug, '//' ) ) {
+			$parts = explode( '//', $slug, 2 );
+			$slug  = $parts[1];
+		}
+
+		$slug     = str_replace( '\\', '/', $slug );
+		$segments = array_filter(
+			explode( '/', $slug ),
+			static function ( string $segment ): bool {
+				return '' !== $segment && '.' !== $segment && '..' !== $segment;
+			}
+		);
+
+		$segments = array_map(
+			static function ( string $segment ): string {
+				return sanitize_title( $segment );
+			},
+			$segments
+		);
+
+		$segments = array_values( array_filter( $segments ) );
+
+		return implode( '/', $segments );
 	}
 
 
