@@ -93,6 +93,7 @@ In **file mode**, saving templates from the Site Editor exports changes directly
 
 - Templates: `/templates/{slug}.html`
 - Template parts: `/parts/{slug}.html`
+- Exported block markup is automatically formatted with consistent indentation for improved readability.
 
 When export succeeds, the plugin removes the corresponding database override so local development stays file-first.
 
@@ -101,6 +102,7 @@ When export succeeds, the plugin removes the corresponding database override so 
 - Autosaves, revisions, and draft-like states are skipped by guardrails.
 - Export requires users with `edit_theme_options` capability.
 - Filesystem write access must be available to WordPress.
+- If formatting cannot be safely validated against the original block structure, the plugin falls back to the original content and logs a debug message when `WP_DEBUG_LOG` is enabled.
 
 #### Troubleshooting
 
