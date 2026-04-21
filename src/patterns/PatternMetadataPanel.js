@@ -39,6 +39,7 @@ export default function PatternMetadataPanel() {
 			postTypes: meta._btd_post_types || [],
 			templateTypes: meta._btd_template_types || [],
 			inserter: meta._btd_inserter !== undefined ? meta._btd_inserter : true,
+			contentOnlyLock: meta._btd_content_only_lock !== undefined ? meta._btd_content_only_lock : false,
 		};
 	}, [] );
 
@@ -223,6 +224,16 @@ export default function PatternMetadataPanel() {
 					checked={ metadata.inserter }
 					onChange={ ( value ) => updateMetadata( 'inserter', value ) }
 					help={ __( 'Whether this pattern should appear in the pattern inserter.', 'block-theme-developer' ) }
+					__nextHasNoMarginBottom
+				/>
+			</PanelRow>
+
+			<PanelRow>
+				<ToggleControl
+					label={ __( 'Content-only editing', 'block-theme-developer' ) }
+					checked={ metadata.contentOnlyLock }
+					onChange={ ( value ) => updateMetadata( 'content_only_lock', value ) }
+					help={ __( 'Applies templateLock "contentOnly" to the exported pattern file only. The authoring editor stays fully editable.', 'block-theme-developer' ) }
 					__nextHasNoMarginBottom
 				/>
 			</PanelRow>

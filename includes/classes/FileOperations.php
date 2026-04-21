@@ -242,10 +242,92 @@ class FileOperations {
 		}
 		$header .= " */\n\n";
 
-		// Add the pattern content
-		$content = $this->format_exported_block_content( (string) $post->post_content );
+		$should_apply_content_only_lock = ! empty( $metadata['_btd_content_only_lock'] );
+
+		// Add the pattern content and apply contentOnly lock at file export boundary when requested.
+		$export_content = $this->apply_content_only_template_lock(
+			(string) $post->post_content,
+			$should_apply_content_only_lock
+		);
+		$content = $this->format_exported_block_content( $export_content );
 
 		return $header . "?>\n" . $content;
+	}
+
+	/**
+	 * Apply or remove templateLock contentOnly on the first supported top-level container block.
+	 *
+	 * @param string $content Pattern block markup content.
+	 * @param bool   $should_apply Whether to apply or remove contentOnly lock.
+	 * @return string Updated content.
+	 */
+	private function apply_content_only_template_lock( string $content, bool $should_apply ): string {
+		if ( false === strpos( $content, '<!-- wp:' ) ) {
+			return $content;
+		}
+
+		$blocks = parse_blocks( $content );
+		if ( empty( $blocks ) ) {
+			return $content;
+		}
+
+		$found_supported_block = false;
+		$changed               = false;
+
+		foreach ( $blocks as $index => $block ) {
+			$block_name = $block['blockName'] ?? null;
+			if ( ! $this->is_supported_template_lock_container( $block_name ) ) {
+				continue;
+			}
+
+			$found_supported_block = true;
+			$attrs                 = isset( $blocks[ $index ]['attrs'] ) && is_array( $blocks[ $index ]['attrs'] ) ? $blocks[ $index ]['attrs'] : [];
+			$current_template_lock = $attrs['templateLock'] ?? null;
+
+			if ( $should_apply ) {
+				if ( 'contentOnly' !== $current_template_lock ) {
+					$attrs['templateLock'] = 'contentOnly';
+					$changed               = true;
+				}
+			} elseif ( 'contentOnly' === $current_template_lock ) {
+				unset( $attrs['templateLock'] );
+				$changed = true;
+			}
+
+			$blocks[ $index ]['attrs'] = $attrs;
+			break;
+		}
+
+		if ( $should_apply && ! $found_supported_block ) {
+			$this->log( 'Skipping templateLock contentOnly export transform: no supported top-level container block found.' );
+			return $content;
+		}
+
+		if ( ! $changed ) {
+			return $content;
+		}
+
+		return serialize_blocks( $blocks );
+	}
+
+	/**
+	 * Whether a block supports templateLock contentOnly.
+	 *
+	 * @param string|null $block_name Parsed block name.
+	 * @return bool
+	 */
+	private function is_supported_template_lock_container( ?string $block_name ): bool {
+		return in_array(
+			$block_name,
+			[
+				'core/group',
+				'core/cover',
+				'core/columns',
+				'core/column',
+				'core/navigation',
+			],
+			true
+		);
 	}
 
 	/**
