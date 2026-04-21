@@ -211,6 +211,12 @@ class PatternManager {
 				'single'       => true,
 				'default'      => true,
 			],
+			'_btd_content_only_lock' => [
+				'type'         => 'boolean',
+				'description'  => __( 'Apply templateLock contentOnly in exported pattern files', 'block-theme-developer' ),
+				'single'       => true,
+				'default'      => false,
+			],
 		];
 
 		foreach ( $meta_fields as $meta_key => $args ) {
@@ -473,6 +479,7 @@ class PatternManager {
 			'_btd_post_types'      => [],
 			'_btd_template_types'  => [],
 			'_btd_inserter'        => true,
+			'_btd_content_only_lock' => false,
 		];
 	}
 
@@ -785,6 +792,7 @@ class PatternManager {
 			'post_types'      => [],
 			'template_types'  => [],
 			'inserter'        => true,
+			'content_only_lock' => false,
 			'content'         => '',
 		];
 
@@ -792,6 +800,10 @@ class PatternManager {
 		if ( preg_match( '/\?>\s*(.*)/s', $file_content, $content_matches ) ) {
 			$pattern_data['content'] = trim( $content_matches[1] );
 		}
+
+		$normalized_content                = $this->extract_content_only_template_lock( $pattern_data['content'] );
+		$pattern_data['content']           = $normalized_content['content'];
+		$pattern_data['content_only_lock'] = $normalized_content['has_content_only_lock'];
 
 		// Parse header lines
 		$header_lines = explode( "\n", $header );
@@ -862,6 +874,67 @@ class PatternManager {
 	}
 
 	/**
+	 * Remove contentOnly templateLock from the first supported top-level block.
+	 *
+	 * @param string $content Block markup content.
+	 * @return array{content:string,has_content_only_lock:bool}
+	 */
+	private function extract_content_only_template_lock( string $content ): array {
+		$result = [
+			'content'               => $content,
+			'has_content_only_lock' => false,
+		];
+
+		if ( false === strpos( $content, '<!-- wp:' ) ) {
+			return $result;
+		}
+
+		$blocks = parse_blocks( $content );
+		if ( empty( $blocks ) ) {
+			return $result;
+		}
+
+		foreach ( $blocks as $index => $block ) {
+			$block_name = $block['blockName'] ?? null;
+			if ( ! $this->is_supported_content_only_container( $block_name ) ) {
+				continue;
+			}
+
+			$attrs = isset( $blocks[ $index ]['attrs'] ) && is_array( $blocks[ $index ]['attrs'] ) ? $blocks[ $index ]['attrs'] : [];
+			if ( 'contentOnly' === ( $attrs['templateLock'] ?? null ) ) {
+				unset( $attrs['templateLock'] );
+				$blocks[ $index ]['attrs']       = $attrs;
+				$result['has_content_only_lock'] = true;
+				$result['content']               = serialize_blocks( $blocks );
+			}
+
+			break;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Whether a block supports templateLock contentOnly.
+	 *
+	 * @param string|null $block_name Block name.
+	 * @return bool
+	 */
+	private function is_supported_content_only_container( ?string $block_name ): bool {
+		return in_array(
+			$block_name,
+			[
+				'core/group',
+				'core/cover',
+				'core/columns',
+				'core/column',
+				'core/navigation',
+			],
+			true
+		);
+	}
+
+	/**
 	 * Create a pattern post from parsed data
 	 *
 	 * @param array $pattern_data Pattern data array.
@@ -901,6 +974,7 @@ class PatternManager {
 		update_post_meta( $post_id, '_btd_template_types', $pattern_data['template_types'] );
 		update_post_meta( $post_id, '_btd_inserter', $pattern_data['inserter'] );
 		update_post_meta( $post_id, '_btd_categories', $pattern_data['categories'] );
+		update_post_meta( $post_id, '_btd_content_only_lock', ! empty( $pattern_data['content_only_lock'] ) );
 
 		// Generate the pattern file after metadata is saved
 		if ( self::is_file_mode() ) {
