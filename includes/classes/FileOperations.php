@@ -17,6 +17,13 @@ class FileOperations {
 	use Singleton;
 
 	/**
+	 * Cached theme package tag from functions.php.
+	 *
+	 * @var string|null|false Null when uncached, false when not found, string when found.
+	 */
+	private static $theme_package_tag = null;
+
+	/**
 	 * Initialize the class
 	 */
 	public function __construct() {
@@ -114,7 +121,7 @@ class FileOperations {
 	/**
 	 * Build an absolute theme file path for template exports.
 	 *
-	 * @param WP_Post $post The template post object.
+	 * @param \WP_Post $post The template post object.
 	 * @return string|false Absolute file path or false on failure.
 	 */
 	public function get_template_file_path( $post ) {
@@ -192,18 +199,92 @@ class FileOperations {
 
 
 	/**
+	 * Get the active parent theme slug.
+	 *
+	 * @return string Theme slug.
+	 */
+	public function get_theme_slug(): string {
+		return (string) get_template();
+	}
+
+	/**
+	 * Get the @package tag from the active theme functions.php, if present.
+	 *
+	 * @return string|null Package tag value or null when not declared.
+	 */
+	public function get_theme_package_tag(): ?string {
+		if ( null !== self::$theme_package_tag ) {
+			return false === self::$theme_package_tag ? null : self::$theme_package_tag;
+		}
+
+		$functions_file = get_template_directory() . '/functions.php';
+		if ( ! is_readable( $functions_file ) ) {
+			self::$theme_package_tag = false;
+			return null;
+		}
+
+		$contents = file_get_contents( $functions_file );
+		if ( false === $contents || ! preg_match( '/@package\s+(\S+)/', $contents, $matches ) ) {
+			self::$theme_package_tag = false;
+			return null;
+		}
+
+		self::$theme_package_tag = $matches[1];
+
+		return self::$theme_package_tag;
+	}
+
+	/**
+	 * Normalize a pattern slug to the short form used by the CPT post_name.
+	 *
+	 * @param string $pattern_slug Pattern slug, with or without theme prefix.
+	 * @return string Sanitized short slug.
+	 */
+	public function normalize_pattern_slug( string $pattern_slug ): string {
+		$theme_slug = $this->get_theme_slug();
+		$prefix     = $theme_slug . '/';
+
+		if ( str_starts_with( $pattern_slug, $prefix ) ) {
+			$pattern_slug = substr( $pattern_slug, strlen( $prefix ) );
+		} elseif ( false !== strpos( $pattern_slug, '/' ) ) {
+			$parts        = explode( '/', $pattern_slug );
+			$pattern_slug = (string) end( $parts );
+		}
+
+		return sanitize_title( $pattern_slug );
+	}
+
+	/**
+	 * Build a theme-namespaced pattern slug for exported pattern files.
+	 *
+	 * @param string $pattern_slug Short pattern slug or already-namespaced slug.
+	 * @return string Namespaced slug, e.g. pulsar/founders.
+	 */
+	public function build_pattern_slug( string $pattern_slug ): string {
+		$pattern_slug = $this->normalize_pattern_slug( $pattern_slug );
+
+		if ( '' === $pattern_slug ) {
+			return $this->get_theme_slug();
+		}
+
+		return $this->get_theme_slug() . '/' . $pattern_slug;
+	}
+
+	/**
 	 * Generate pattern file content
 	 *
-	 * @param WP_Post $post The post object.
-	 * @param array   $metadata Pattern metadata.
-	 * @param array   $categories Pattern categories.
+	 * @param \WP_Post $post The post object.
+	 * @param array    $metadata Pattern metadata.
+	 * @param array    $categories Pattern categories.
 	 * @return string The file content.
 	 */
 	private function generate_pattern_file_content( $post, array $metadata, array $categories ): string {
+		$pattern_slug = ! empty( $post->post_name ) ? (string) $post->post_name : sanitize_title( $post->post_title );
+
 		// Always include core fields
 		$header_parts = [
 			'Title' => $post->post_title,
-			'Slug'  => $post->post_name,
+			'Slug'  => $this->build_pattern_slug( $pattern_slug ),
 		];
 
 		// Add fields only if they have values (except Inserter and Viewport Width which should always be included)
@@ -240,6 +321,13 @@ class FileOperations {
 		foreach ( $header_parts as $key => $value ) {
 			$header .= " * {$key}: {$value}\n";
 		}
+
+		$package_tag = $this->get_theme_package_tag();
+		if ( null !== $package_tag ) {
+			$header .= " *\n";
+			$header .= " * @package {$package_tag}\n";
+		}
+
 		$header .= " */\n\n";
 
 		$should_apply_content_only_lock = ! empty( $metadata['_btd_content_only_lock'] );
