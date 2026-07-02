@@ -236,18 +236,18 @@ class PatternManager {
 				'post',
 				$meta_key,
 				[
-				'object_subtype'    => 'btd_pattern',
-				'type'              => $args['type'],
-				'description'       => $args['description'],
-				'single'            => $args['single'],
-				'default'           => $args['default'],
-				'show_in_rest'      => [
-					'schema' => $rest_schema,
-				],
-				'auth_callback'     => function () {
-					return current_user_can( 'edit_btd_patterns' );
-				},
-				'sanitize_callback' => $args['type'] === 'array' ? [ $this, 'sanitize_array_meta' ] : null,
+					'object_subtype'    => 'btd_pattern',
+					'type'              => $args['type'],
+					'description'       => $args['description'],
+					'single'            => $args['single'],
+					'default'           => $args['default'],
+					'show_in_rest'      => [
+						'schema' => $rest_schema,
+					],
+					'auth_callback'     => function () {
+						return current_user_can( 'edit_btd_patterns' );
+					},
+					'sanitize_callback' => $args['type'] === 'array' ? [ $this, 'sanitize_array_meta' ] : null,
 				]
 			);
 		}
@@ -295,12 +295,16 @@ class PatternManager {
 			$block_types        = $this->get_available_block_types();
 			$template_types     = $this->get_available_template_types();
 
-			wp_localize_script( 'btd-pattern-sidebar', 'btdData', [
-				'patternCategories' => $pattern_categories,
-				'postTypes'         => $post_types,
-				'blockTypes'        => $block_types,
-				'templateTypes'     => $template_types,
-			] );
+			wp_localize_script(
+				'btd-pattern-sidebar',
+				'btdData',
+				[
+					'patternCategories' => $pattern_categories,
+					'postTypes'         => $post_types,
+					'blockTypes'        => $block_types,
+					'templateTypes'     => $template_types,
+				]
+			);
 
 			// Localize script with environment data
 			wp_localize_script(
@@ -393,10 +397,10 @@ class PatternManager {
 	}
 
 		/**
-	 * Get all available block template types
-	 *
-	 * @return array Array of block template type slugs.
-	 */
+		 * Get all available block template types
+		 *
+		 * @return array Array of block template type slugs.
+		 */
 	public function get_available_template_types(): array {
 		$template_types = get_default_block_template_types();
 
@@ -543,7 +547,7 @@ class PatternManager {
 		if ( isset( $_GET['import_success'] ) ) {
 			$count = intval( $_GET['import_success'] );
 			echo '<div class="notice notice-success is-dismissible"><p>' .
-				sprintf( esc_html__( 'Successfully imported %d patterns', 'block-theme-developer' ), $count ) .
+				sprintf( esc_html__( 'Successfully imported %d patterns', 'block-theme-developer' ), absint( $count ) ) .
 				'</p></div>';
 		}
 
@@ -567,7 +571,7 @@ class PatternManager {
 
 		// Check which patterns already exist
 		foreach ( $theme_patterns as $pattern_file ) {
-			$pattern_name  = basename( $pattern_file, '.php' );
+			$pattern_name  = $this->get_pattern_post_name_from_file( $pattern_file );
 			$existing_post = get_page_by_path( $pattern_name, OBJECT, 'btd_pattern' );
 			if ( $existing_post ) {
 				$existing_count++;
@@ -591,7 +595,7 @@ class PatternManager {
 					<p>
 						<strong><?php printf( esc_html__( 'Found %d pattern files in theme', 'block-theme-developer' ), count( $theme_patterns ) ); ?></strong><br>
 						<?php if ( $existing_count > 0 ) : ?>
-							<?php printf( esc_html__( '%d patterns already imported', 'block-theme-developer' ), $existing_count ); ?>
+							<?php printf( esc_html__( '%d patterns already imported', 'block-theme-developer' ), absint( $existing_count ) ); ?>
 						<?php endif; ?>
 					</p>
 				</div>
@@ -610,7 +614,7 @@ class PatternManager {
 						<tbody>
 							<?php foreach ( $theme_patterns as $pattern_file ) : ?>
 								<?php
-								$pattern_name  = basename( $pattern_file, '.php' );
+								$pattern_name  = $this->get_pattern_post_name_from_file( $pattern_file );
 								$existing_post = get_page_by_path( $pattern_name, OBJECT, 'btd_pattern' );
 								?>
 								<tr>
@@ -661,10 +665,13 @@ class PatternManager {
 			$import_results     = $this->import_pattern_files( $patterns_to_import );
 
 			// Build redirect URL with results
-			$redirect_url = add_query_arg( [
-				'post_type' => 'btd_pattern',
-				'page'      => 'btd-import-patterns',
-			], admin_url( 'edit.php' ) );
+			$redirect_url = add_query_arg(
+				[
+					'post_type' => 'btd_pattern',
+					'page'      => 'btd-import-patterns',
+				],
+				admin_url( 'edit.php' )
+			);
 
 			if ( ! empty( $import_results['success'] ) ) {
 				$redirect_url = add_query_arg( 'import_success', count( $import_results['success'] ), $redirect_url );
@@ -702,11 +709,13 @@ class PatternManager {
 		}
 
 		// Check if any patterns already exist
-		$existing_patterns = get_posts( [
-			'post_type'      => 'btd_pattern',
-			'posts_per_page' => 1,
-			'post_status'    => 'any',
-		] );
+		$existing_patterns = get_posts(
+			[
+				'post_type'      => 'btd_pattern',
+				'posts_per_page' => 1,
+				'post_status'    => 'any',
+			]
+		);
 
 		if ( ! empty( $existing_patterns ) ) {
 			update_option( 'btd_auto_imported_patterns', true );
@@ -783,8 +792,9 @@ class PatternManager {
 
 		// Parse header fields
 		$pattern_data = [
-			'title'           => '',
-			'description'     => '',
+			'title'             => '',
+			'slug'              => '',
+			'description'       => '',
 			'categories'      => [],
 			'keywords'        => [],
 			'viewport_width'  => 1280,
@@ -821,10 +831,12 @@ class PatternManager {
 			$key = trim( $key );
 			$value = trim( $value );
 
-
 			switch ( strtolower( str_replace( ' ', '', $key ) ) ) {
 				case 'title':
 					$pattern_data['title'] = $value;
+					break;
+				case 'slug':
+					$pattern_data['slug'] = $value;
 					break;
 				case 'description':
 					$pattern_data['description'] = $value;
@@ -853,8 +865,31 @@ class PatternManager {
 			}
 		}
 
-
 		return $pattern_data;
+	}
+
+	/**
+	 * Derive the CPT post_name for a pattern file.
+	 *
+	 * @param string $file_path Absolute path to a pattern file.
+	 * @return string Short sanitized slug for post_name lookup.
+	 */
+	private function get_pattern_post_name_from_file( string $file_path ): string {
+		$pattern_data = $this->parse_pattern_file( $file_path );
+
+		if ( false === $pattern_data ) {
+			return basename( $file_path, '.php' );
+		}
+
+		if ( ! empty( $pattern_data['slug'] ) ) {
+			return FileOperations::instance()->normalize_pattern_slug( $pattern_data['slug'] );
+		}
+
+		if ( ! empty( $pattern_data['title'] ) ) {
+			return sanitize_title( $pattern_data['title'] );
+		}
+
+		return basename( $file_path, '.php' );
 	}
 
 	/**
@@ -941,7 +976,15 @@ class PatternManager {
 	 * @return int|WP_Error Post ID on success, WP_Error on failure.
 	 */
 	private function create_pattern_from_data( array $pattern_data ) {
-		$pattern_name = sanitize_title( $pattern_data['title'] );
+		if ( ! empty( $pattern_data['slug'] ) ) {
+			$pattern_name = FileOperations::instance()->normalize_pattern_slug( $pattern_data['slug'] );
+		} else {
+			$pattern_name = sanitize_title( $pattern_data['title'] );
+		}
+
+		if ( '' === $pattern_name ) {
+			$pattern_name = sanitize_title( $pattern_data['title'] );
+		}
 
 		// Check if pattern already exists
 		$existing_post = get_page_by_path( $pattern_name, OBJECT, 'btd_pattern' );
