@@ -149,6 +149,7 @@ Example generated file:
 <?php
 /**
  * Title: My Awesome Pattern
+ * Slug: my-theme/my-awesome-pattern
  * Description: A simple paragraph pattern for greetings
  * Categories: hero, text
  * Keywords: greeting, hello
@@ -156,7 +157,9 @@ Example generated file:
  * Block Types: core/paragraph
  * Post Types: post, page
  * Template Types: author, 404
- * Inserter: yes
+ * Inserter: true
+ *
+ * @package MyTheme
  */
 ?>
 <p>Hello world.</p>
