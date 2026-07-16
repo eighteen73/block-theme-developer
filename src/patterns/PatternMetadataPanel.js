@@ -7,32 +7,107 @@ import {
 	FormTokenField,
 	TextControl,
 	ToggleControl,
-	PanelRow
+	PanelRow,
 } from '@wordpress/components';
 import { useSelect, useDispatch } from '@wordpress/data';
-import { useState, useEffect } from '@wordpress/element';
+import { useState, useEffect, useLayoutEffect } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { __ } from '@wordpress/i18n';
 
 /**
- * Pattern Metadata Panel Component
+ * Convert token field values to arrays.
+ *
+ * @param {string|string[]} value Value.
+ * @return {string[]} Tokens.
+ */
+function stringArrayToTokens( value ) {
+	if ( Array.isArray( value ) ) {
+		return value;
+	}
+	return value ? value.split( ',' ).map( ( item ) => item.trim() ).filter( Boolean ) : [];
+}
+
+/**
+ * @param {string[]} tokens Tokens.
+ * @return {string[]} Array.
+ */
+function tokensToStringArray( tokens ) {
+	return Array.isArray( tokens ) ? tokens : [];
+}
+
+/**
+ * Core hardcodes PluginDocumentSettingPanel above PostTaxonomies.
+ * Move our panel to sit directly under Pattern Categories when present.
+ *
+ * @param {boolean} enabled Whether reordering should run.
+ */
+function usePanelBelowPatternCategories( enabled ) {
+	useLayoutEffect( () => {
+		if ( ! enabled ) {
+			return;
+		}
+
+		const movePanel = () => {
+			const btdPanel = document.querySelector( '.btd-pattern-details-panel' );
+			if ( ! btdPanel?.parentElement ) {
+				return false;
+			}
+
+			const parent = btdPanel.parentElement;
+			const siblings = Array.from( parent.children ).filter( ( el ) =>
+				el.classList?.contains( 'components-panel__body' )
+			);
+
+			const categoriesPanel = siblings.find( ( el ) => {
+				const title = el.querySelector( '.components-panel__body-title' );
+				return title && /pattern categories/i.test( title.textContent || '' );
+			} );
+
+			if ( ! categoriesPanel ) {
+				return false;
+			}
+
+			if ( categoriesPanel.nextElementSibling !== btdPanel ) {
+				categoriesPanel.after( btdPanel );
+			}
+
+			return true;
+		};
+
+		if ( movePanel() ) {
+			return;
+		}
+
+		const observer = new MutationObserver( () => {
+			if ( movePanel() ) {
+				observer.disconnect();
+			}
+		} );
+
+		observer.observe( document.body, { childList: true, subtree: true } );
+
+		return () => observer.disconnect();
+	}, [ enabled ] );
+}
+
+/**
+ * Pattern Details sidebar panel for native wp_block patterns.
+ *
+ * Categories use core's Pattern Categories panel.
  */
 export default function PatternMetadataPanel() {
-	// Only show on btd_pattern post type
 	const postType = useSelect( ( select ) => {
 		return select( 'core/editor' ).getCurrentPostType();
 	}, [] );
 
-	if ( 'btd_pattern' !== postType ) {
-		return null;
-	}
+	const isWpBlock = 'wp_block' === postType;
 
-	// Get current metadata
+	usePanelBelowPatternCategories( isWpBlock );
+
 	const metadata = useSelect( ( select ) => {
 		const meta = select( 'core/editor' ).getEditedPostAttribute( 'meta' ) || {};
 		return {
 			description: meta._btd_description || '',
-			categories: meta._btd_categories || [],
 			keywords: meta._btd_keywords || [],
 			viewportWidth: meta._btd_viewport_width || 1280,
 			blockTypes: meta._btd_block_types || [],
@@ -40,54 +115,55 @@ export default function PatternMetadataPanel() {
 			templateTypes: meta._btd_template_types || [],
 			inserter: meta._btd_inserter !== undefined ? meta._btd_inserter : true,
 			contentOnlyLock: meta._btd_content_only_lock !== undefined ? meta._btd_content_only_lock : false,
+			synced: meta._btd_synced !== undefined ? meta._btd_synced : false,
 		};
 	}, [] );
 
-	// Get pattern categories, post types, block types, and template types from localized data
-	const [ coreCategories, setCoreCategories ] = useState( [] );
-	const [ postTypes, setPostTypes ] = useState( [] );
-	const [ blockTypes, setBlockTypes ] = useState( [] );
-	const [ templateTypes, setTemplateTypes ] = useState( [] );
+	const [ suggestions, setSuggestions ] = useState( {
+		postTypes: [],
+		blockTypes: [],
+		templateTypes: {},
+	} );
 
 	useEffect( () => {
-		// Use data passed via wp_localize_script (more reliable than REST API)
-		if ( window.btdData ) {
-			setCoreCategories( window.btdData.patternCategories || [] );
-			setPostTypes( window.btdData.postTypes || [] );
-			setBlockTypes( window.btdData.blockTypes || [] );
-			setTemplateTypes( window.btdData.templateTypes || [] );
-		} else {
-			// Fallback to WordPress core endpoints if localized data isn't available
-			Promise.all( [
-				apiFetch( { path: '/wp/v2/block-patterns/categories' } ),
-				apiFetch( { path: '/wp/v2/types' } )
-			] )
-				.then( ( [ wpCategories, wpTypes ] ) => {
-					const categorySlugs = wpCategories.map( cat => cat.name );
-					const publicTypes = Object.values( wpTypes )
-						.filter( type => type.viewable && type.slug !== 'attachment' )
-						.map( type => type.slug );
-
-					setCoreCategories( categorySlugs );
-					setPostTypes( publicTypes );
-					// Note: Block types would need a custom endpoint for fallback
-					setBlockTypes( [] );
-				} )
-				.catch( ( error ) => {
-					setCoreCategories( [] );
-					setPostTypes( [] );
-					setBlockTypes( [] );
-					setTemplateTypes( [] );
-				} );
+		if ( ! isWpBlock ) {
+			return;
 		}
-	}, [] );
 
-	// Dispatch function to update post meta
+		if ( window.btdData ) {
+			setSuggestions( {
+				postTypes: window.btdData.postTypes || [],
+				blockTypes: window.btdData.blockTypes || [],
+				templateTypes: window.btdData.templateTypes || {},
+			} );
+			return;
+		}
+
+		apiFetch( { path: '/wp/v2/types' } )
+			.then( ( wpTypes ) => {
+				setSuggestions( {
+					postTypes: Object.values( wpTypes )
+						.filter( ( type ) => type.viewable && type.slug !== 'attachment' )
+						.map( ( type ) => type.slug ),
+					blockTypes: [],
+					templateTypes: {},
+				} );
+			} )
+			.catch( () => {
+				setSuggestions( {
+					postTypes: [],
+					blockTypes: [],
+					templateTypes: {},
+				} );
+			} );
+	}, [ isWpBlock ] );
+
 	const { editPost } = useDispatch( 'core/editor' );
 
-	/**
-	 * Update metadata field
-	 */
+	if ( ! isWpBlock ) {
+		return null;
+	}
+
 	const updateMetadata = ( field, value ) => {
 		editPost( {
 			meta: {
@@ -96,26 +172,21 @@ export default function PatternMetadataPanel() {
 		} );
 	};
 
-
-	/**
-	 * Convert token field values to arrays
-	 */
-	const stringArrayToTokens = ( value ) => {
-		if ( Array.isArray( value ) ) {
-			return value;
+	const normalizeTemplateTypeToken = ( token ) => {
+		if ( suggestions.templateTypes[ token ] ) {
+			return token;
 		}
-		return value ? value.split( ',' ).map( item => item.trim() ).filter( item => item ) : [];
-	};
-
-	const tokensToStringArray = ( tokens ) => {
-		return Array.isArray( tokens ) ? tokens : [];
+		const match = Object.entries( suggestions.templateTypes ).find(
+			( [ , data ] ) => ( data?.title || '' ) === token
+		);
+		return match ? match[ 0 ] : token;
 	};
 
 	return (
 		<PluginDocumentSettingPanel
-			name="btd-pattern-metadata"
-			title={ __( 'Pattern Metadata', 'block-theme-developer' ) }
-			className="btd-pattern-metadata-panel"
+			name="btd-pattern-details"
+			title={ __( 'Pattern Details', 'block-theme-developer' ) }
+			className="btd-pattern-details-panel"
 		>
 			<PanelRow>
 				<TextareaControl
@@ -125,23 +196,6 @@ export default function PatternMetadataPanel() {
 					help={ __( 'A brief description of what this pattern does.', 'block-theme-developer' ) }
 					__nextHasNoMarginBottom
 				/>
-			</PanelRow>
-
-			<PanelRow>
-				<div style={ { width: '100%' } }>
-					<FormTokenField
-						id="btd-categories"
-						label={ __( 'Categories', 'block-theme-developer' ) }
-						value={ stringArrayToTokens( metadata.categories ) }
-						_experimentalAutoSelectFirstMatch
-						__experimentalExpandOnFocus
-						__next40pxDefaultSize
-						suggestions={ coreCategories }
-						onChange={ ( tokens ) => updateMetadata( 'categories', tokensToStringArray( tokens ) ) }
-						help={ __( 'Select from WordPress core pattern categories.', 'block-theme-developer' ) }
-						__nextHasNoMarginBottom
-					/>
-				</div>
 			</PanelRow>
 
 			<PanelRow>
@@ -164,13 +218,13 @@ export default function PatternMetadataPanel() {
 						id="btd-block-types"
 						label={ __( 'Block Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.blockTypes ) }
-						suggestions={ blockTypes }
+						suggestions={ suggestions.blockTypes }
 						onChange={ ( tokens ) => updateMetadata( 'block_types', tokensToStringArray( tokens ) ) }
 						help={ __( 'Select from available block types and template part areas.', 'block-theme-developer' ) }
 						__experimentalExpandOnFocus
 						__next40pxDefaultSize
 						__nextHasNoMarginBottom
-						/>
+					/>
 				</div>
 			</PanelRow>
 
@@ -180,7 +234,7 @@ export default function PatternMetadataPanel() {
 						id="btd-post-types"
 						label={ __( 'Post Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.postTypes ) }
-						suggestions={ postTypes }
+						suggestions={ suggestions.postTypes }
 						onChange={ ( tokens ) => updateMetadata( 'post_types', tokensToStringArray( tokens ) ) }
 						help={ __( 'Select from registered post types.', 'block-theme-developer' ) }
 						__experimentalExpandOnFocus
@@ -195,9 +249,17 @@ export default function PatternMetadataPanel() {
 					<FormTokenField
 						id="btd-template-types"
 						label={ __( 'Template Types', 'block-theme-developer' ) }
-						value={ stringArrayToTokens( metadata.templateTypes ) }
-						onChange={ ( tokens ) => updateMetadata( 'template_types', tokensToStringArray( tokens ) ) }
-						suggestions={ Object.keys( templateTypes ).map( slug => templateTypes[ slug ]?.title || slug ) }
+						value={ stringArrayToTokens( metadata.templateTypes ).map( normalizeTemplateTypeToken ) }
+						onChange={ ( tokens ) => {
+							updateMetadata(
+								'template_types',
+								tokensToStringArray( tokens ).map( normalizeTemplateTypeToken )
+							);
+						} }
+						suggestions={ Object.keys( suggestions.templateTypes ) }
+						displayTransform={ ( token ) =>
+							suggestions.templateTypes[ token ]?.title || token
+						}
 						help={ __( 'Template types this pattern is designed for.', 'block-theme-developer' ) }
 						__experimentalExpandOnFocus
 						__next40pxDefaultSize
@@ -234,6 +296,16 @@ export default function PatternMetadataPanel() {
 					checked={ metadata.contentOnlyLock }
 					onChange={ ( value ) => updateMetadata( 'content_only_lock', value ) }
 					help={ __( 'Applies templateLock "contentOnly" to the exported pattern file only. The authoring editor stays fully editable.', 'block-theme-developer' ) }
+					__nextHasNoMarginBottom
+				/>
+			</PanelRow>
+
+			<PanelRow>
+				<ToggleControl
+					label={ __( 'Synced theme pattern', 'block-theme-developer' ) }
+					checked={ metadata.synced }
+					onChange={ ( value ) => updateMetadata( 'synced', value ) }
+						help={ __( 'Writes Synced: true to the theme pattern file so Orbit can sync layout updates. When off, the theme file is written without Synced.', 'block-theme-developer' ) }
 					__nextHasNoMarginBottom
 				/>
 			</PanelRow>

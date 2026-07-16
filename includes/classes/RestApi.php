@@ -199,9 +199,8 @@ class RestApi {
 		$search   = $request->get_param( 'search' );
 		$category = $request->get_param( 'category' );
 
-		// Build query args
 		$args = [
-			'post_type'      => 'btd_pattern',
+			'post_type'      => 'wp_block',
 			'post_status'    => 'publish',
 			'posts_per_page' => $per_page,
 			'paged'          => $page,
@@ -209,23 +208,31 @@ class RestApi {
 			'order'          => 'ASC',
 		];
 
-		// Add search if provided
 		if ( ! empty( $search ) ) {
 			$args['s'] = $search;
 		}
 
-		// Add category filter if provided
 		if ( ! empty( $category ) ) {
-			$args['meta_query'] = [
-				[
-					'key'     => '_btd_categories',
-					'value'   => $category,
-					'compare' => 'LIKE',
-				],
-			];
+			if ( taxonomy_exists( 'wp_pattern_category' ) ) {
+				$args['tax_query'] = [
+					[
+						'taxonomy' => 'wp_pattern_category',
+						'field'    => 'slug',
+						'terms'    => [ $category ],
+					],
+				];
+			} else {
+				$args['meta_query'] = [
+					[
+						'key'     => '_btd_categories',
+						'value'   => $category,
+						'compare' => 'LIKE',
+					],
+				];
+			}
 		}
 
-		$query = new \WP_Query( $args );
+		$query    = new \WP_Query( $args );
 		$patterns = [];
 
 		foreach ( $query->posts as $post ) {
@@ -248,16 +255,16 @@ class RestApi {
 	 * @return array Formatted pattern data.
 	 */
 	private function format_pattern_data( $post ): array {
-		$metadata = PatternManager::get_pattern_metadata( $post->ID );
+		$metadata   = PatternManager::get_pattern_metadata( $post->ID );
+		$categories = $this->resolve_pattern_categories( $post->ID, $metadata );
 
-		// Format the response with all metadata for external access
-		$pattern_data = [
+		return [
 			'id'            => $post->ID,
 			'name'          => $post->post_name,
 			'title'         => $post->post_title,
 			'content'       => $post->post_content,
 			'description'   => $metadata['_btd_description'],
-			'categories'    => $this->ensure_array( $metadata['_btd_categories'] ),
+			'categories'    => $categories,
 			'keywords'      => $this->ensure_array( $metadata['_btd_keywords'] ),
 			'viewportWidth' => (int) $metadata['_btd_viewport_width'],
 			'blockTypes'    => $this->ensure_array( $metadata['_btd_block_types'] ),
@@ -267,8 +274,24 @@ class RestApi {
 			'lastUpdated'   => $post->post_modified,
 			'created'       => $post->post_date,
 		];
+	}
 
-		return $pattern_data;
+	/**
+	 * Resolve pattern categories from taxonomy, falling back to BTD meta.
+	 *
+	 * @param int   $post_id  Post ID.
+	 * @param array $metadata Pattern metadata.
+	 * @return array
+	 */
+	private function resolve_pattern_categories( int $post_id, array $metadata ): array {
+		if ( taxonomy_exists( 'wp_pattern_category' ) ) {
+			$terms = wp_get_object_terms( $post_id, 'wp_pattern_category', [ 'fields' => 'slugs' ] );
+			if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+				return array_values( $terms );
+			}
+		}
+
+		return $this->ensure_array( $metadata['_btd_categories'] ?? [] );
 	}
 
 	/**

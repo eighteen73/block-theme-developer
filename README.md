@@ -1,34 +1,25 @@
 # Block Theme Developer
 
-A developer-focused plugin for developing block themes for WordPress. This plugin provides essential tools for professional WordPress block theme developers to streamline pattern management and template synchronization.
+A developer-focused plugin for developing block themes for WordPress. Essential tools for pattern authoring (via the native Site Editor) and template export.
 
 ## Features
 
 ### Part 1: Pattern Management
 
-- **Custom Post Type**: `btd_pattern` for managing block patterns
-- **React Sidebar**: Rich metadata editor in the block editor sidebar
+- **Native Patterns UI**: Create and edit patterns in **Appearance → Editor → Patterns** (`wp_block`)
+- **Pattern Details sidebar**: Description, keywords, block/post/template types, viewport, inserter, content-only lock, synced toggle
 - **Dual Mode Operation**:
-  - **File Mode**: Saves patterns as `.php` files in your active theme's `/patterns` directory
-  - **API Mode**: Provides REST API endpoints for pattern data retrieval
-- **Rich Metadata Support**:
-  - Description
-  - Categories (WordPress core pattern categories)
-  - Keywords
-  - Viewport Width
-  - Block Types
-  - Post Types
-  - Template Types
-  - Inserter Visibility
+  - **File Mode** (local/dev): Every published pattern save writes `patterns/{slug}.php` in the active stylesheet theme
+  - **API Mode** (pattern library): Patterns stay as `wp_block` posts; exposed via `btd/v1` for other sites
+- **Synced patterns (Orbit)**: With **Synced theme pattern** on, the file includes `Synced: true`, the `wp_block` is kept, and Orbit syncs layout updates to every instance
+- **Unsynced theme patterns**: Synced off → file written without `Synced` (DB pattern is kept while editing so the Site Editor does not break)
 
 ### Part 2: Template Export
 
 - **Automatic Template Export in File Mode**:
-  - Exports `wp_template` changes to your active stylesheet theme `/templates` directory as `.html`
-  - Exports `wp_template_part` changes to your active stylesheet theme `/parts` directory as `.html`
-- **Strict Development Guardrails**:
-  - In `file` mode, successful template exports remove DB overrides so file changes remain the source of truth
-  - Helps prevent accidental long-lived template data in the database during development
+  - Exports `wp_template` changes to `/templates/{slug}.html`
+  - Exports `wp_template_part` changes to `/parts/{slug}.html`
+- Successful exports remove DB overrides so files remain the source of truth
 
 ## Installation
 
@@ -37,14 +28,14 @@ A developer-focused plugin for developing block themes for WordPress. This plugi
 3. Run `npm run build` to build the JavaScript assets
 4. Activate the plugin in your WordPress admin
 
+**Requires:** WordPress 7.0+, PHP 8.3+
+
 ## Configuration
 
 ### BLOCK_THEME_DEVELOPER_MODE Constant
 
-The plugin behavior is controlled by the `BLOCK_THEME_DEVELOPER_MODE` constant:
-
-- **file**: Saves patterns as PHP files in your active theme
-- **api**: Provides REST API access to pattern data
+- **file**: Export patterns/templates to the active theme (local development)
+- **api**: Serve pattern data from `wp_block` via REST (pattern library sites)
 
 #### Setting the Mode
 
@@ -54,97 +45,59 @@ define( 'BLOCK_THEME_DEVELOPER_MODE', 'file' );
 ```
 
 **Option 2: Automatic Detection**
-If not defined, the plugin will automatically set:
+If not defined:
 - `file` mode for `development` or `local` environments
 - `api` mode for all other environments
 
 ## Usage
 
-### Creating Patterns
+### File mode — theme patterns
 
-1. Go to **Patterns** in your WordPress admin
-2. Click **Add New Pattern**
-3. Create your pattern content using the block editor
-4. Fill in the pattern metadata in the **Pattern Metadata** panel in the sidebar:
-   - Description
-   - Categories
-   - Keywords
-   - Block Types
-   - Post Types
-   - Template Types
-   - Viewport Width
-   - Inserter visibility
+1. Open **Appearance → Editor → Patterns**
+2. Create or edit a pattern
+3. Use **Pattern Categories** (core) and **Pattern Details** (BTD) in the sidebar
+4. Save (after the pattern has real block content — empty “Add pattern” creates are ignored):
+   - **Synced** (Add Pattern modal or Pattern Details): writes `patterns/{slug}.php` with `Synced: true`, keeps the `wp_block` for Orbit
+   - **Unsynced**: writes the theme file without `Synced`, keeps the `wp_block` open in the editor
 
-### Importing Existing Theme Patterns
+BTD is not used on production in file mode. Published pattern saves with content export to the theme.
 
-When working with existing themes that have pattern files, you can import them into the database for editing:
+### API mode — pattern library
 
-1. Go to **Patterns > Import Patterns** in your admin menu
-2. Select which pattern files you want to import
-3. Click **Import Selected Patterns**
-4. Edit the imported patterns using the rich interface
-5. Your changes will automatically update the theme files when you save
+1. Create patterns in the Site Editor (they remain as `wp_block` posts)
+2. Fill **Pattern Details** meta as needed
+3. Other sites consume them via the REST API (see below)
 
-**Auto-Import**: In development environments, the plugin automatically imports any existing theme patterns when first activated.
+No theme files are written in API mode.
 
 ### Exporting Templates and Template Parts
 
-In **file mode**, saving templates from the Site Editor exports changes directly to the active stylesheet theme:
+In **file mode**, saving templates from the Site Editor exports to the active stylesheet theme:
 
 - Templates: `/templates/{slug}.html`
 - Template parts: `/parts/{slug}.html`
-- Exported block markup is automatically formatted with consistent indentation for improved readability.
 
-When export succeeds, the plugin removes the corresponding database override so local development stays file-first.
+When export succeeds, the plugin removes the database override.
 
-#### Important Notes
-
-- Autosaves, revisions, and draft-like states are skipped by guardrails.
-- Export requires users with `edit_theme_options` capability.
-- Filesystem write access must be available to WordPress.
-- If formatting cannot be safely validated against the original block structure, the plugin falls back to the original content and logs a debug message when `WP_DEBUG_LOG` is enabled.
-
-#### Troubleshooting
-
-- Enable `WP_DEBUG_LOG` in your WordPress environment to review export logs.
-- Failed exports keep DB content intact (no cleanup is performed).
+Autosaves, revisions, and draft-like states are skipped. Export requires `edit_theme_options`.
 
 ## Development Workflow
 
-This plugin supports a hybrid development workflow that's perfect for professional theme development:
+### Typical file-mode workflow
 
-### **Typical Workflow**
+1. Install BTD as a local/dev dependency (`file` mode)
+2. Author patterns and templates in the Site Editor
+3. Theme PHP/HTML files update on save — commit them to Git
+4. Production runs the theme (and Orbit for synced patterns) without BTD
 
-1. **Development Environment**:
-   - Install plugin as dev dependency
-   - Import existing theme patterns (auto-imports on activation)
-   - Edit patterns with rich UI and metadata
-   - Export to theme files automatically on save
+### Typical API-mode workflow
 
-2. **Production Environment**:
-   - Deploy theme files (no plugin needed)
-   - Patterns work natively in WordPress
-   - No database records or plugin dependencies
+1. Run a pattern library site with BTD in `api` mode
+2. Author patterns in admin as `wp_block` posts
+3. Client sites pull `GET /wp-json/btd/v1/patterns` with Application Passwords
 
-3. **Pull from Production**:
-   - Download production site
-   - Activate plugin locally
-   - Auto-import existing theme patterns for editing
-   - Continue development with full editing capability
+### File Mode example
 
-### **Benefits**
-
-- **Development**: Rich editing interface with metadata management
-- **Production**: Clean, lightweight theme files only
-- **Version Control**: Pattern files are easily tracked in Git
-- **Collaboration**: Team members can edit patterns visually
-- **Deployment**: No plugin dependencies in production
-
-### File Mode
-
-When in file mode, patterns are automatically saved to your active theme's `/patterns` directory as PHP files with proper WordPress pattern headers.
-
-Example generated file:
 ```php
 <?php
 /**
@@ -158,6 +111,7 @@ Example generated file:
  * Post Types: post, page
  * Template Types: author, 404
  * Inserter: true
+ * Synced: true
  *
  * @package MyTheme
  */
@@ -166,8 +120,6 @@ Example generated file:
 ```
 
 ### API Mode
-
-When in API mode, access pattern data via REST API with WordPress Application Passwords authentication:
 
 **Get all patterns:**
 ```
@@ -179,46 +131,30 @@ GET /wp-json/btd/v1/patterns
 GET /wp-json/btd/v1/auth-info
 ```
 
+Patterns are loaded from published `wp_block` posts (not a custom post type). Categories prefer the `wp_pattern_category` taxonomy, with `_btd_categories` as fallback.
+
 #### Setting up Application Passwords
 
-1. Go to **Users > Profile** in your WordPress admin
-2. Scroll down to the **"Application Passwords"** section
-3. Enter a name for your application (e.g., "Client Site")
-4. Click **"Add New Application Password"**
-5. Copy the generated username and password
-6. Use these credentials for HTTP Basic Authentication
+1. Go to **Users > Profile**
+2. Scroll to **Application Passwords**
+3. Create a password for your client application
+4. Use HTTP Basic Auth; the user needs the `btd_api_access` capability
 
-**Important:** The user must have the `btd_api_access` capability to access the API. When in API mode, the plugin automatically:
-- Creates the `btd_api_access` capability
-- Creates an `API User` role with this capability
-- Assigns the capability to administrators
+In API mode the plugin creates the `btd_api_access` capability, an `API User` role, and grants the capability to administrators.
 
-You can assign this capability to other users or roles using a plugin like User Role Editor.
-
-#### Example Usage
-
-**cURL with Basic Auth:**
+**cURL:**
 ```bash
 curl -u "username:password" \
   https://yoursite.com/wp-json/btd/v1/patterns
-```
-
-**JavaScript with fetch:**
-```javascript
-const response = await fetch('/wp-json/btd/v1/patterns', {
-  headers: {
-    'Authorization': 'Basic ' + btoa('username:password')
-  }
-});
-const patterns = await response.json();
 ```
 
 **Response format:**
 ```json
 {
   "id": 123,
+  "name": "my-awesome-pattern",
   "title": "My Awesome Pattern",
-  "content": "<p>Hello world.</p>",
+  "content": "<!-- wp:paragraph --><p>Hello world.</p><!-- /wp:paragraph -->",
   "description": "A simple paragraph pattern for greetings",
   "categories": ["hero", "text"],
   "keywords": ["greeting", "hello"],
@@ -226,7 +162,9 @@ const patterns = await response.json();
   "blockTypes": ["core/paragraph"],
   "postTypes": ["post", "page"],
   "templateTypes": ["author", "404"],
-  "inserter": true
+  "inserter": true,
+  "lastUpdated": "2026-07-16 12:00:00",
+  "created": "2026-07-16 10:00:00"
 }
 ```
 
@@ -243,18 +181,3 @@ const patterns = await response.json();
 ### Coding Standards
 
 This plugin follows the [eighteen73 WordPress Coding Standards](https://github.com/eighteen73/wordpress-coding-standards).
-
-Run PHP CodeSniffer:
-```bash
-composer test
-```
-
-## Requirements
-
-- WordPress 6.2+
-- PHP 8.3+
-- Node.js 22+ (for development)
-
-## License
-
-GPL-2.0-or-later
