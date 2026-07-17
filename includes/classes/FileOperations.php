@@ -31,43 +31,339 @@ class FileOperations {
 	}
 
 	/**
-	 * Save pattern to theme file
+	 * Save a wp_block pattern to a theme PHP file.
 	 *
-	 * @param int $post_id The post ID.
+	 * Uses a stable slug-based filename. When $synced is true, emits Synced: true
+	 * and claims the post for Orbit. When false, omits the Synced header.
+	 *
+	 * @param int  $post_id The wp_block post ID.
+	 * @param bool $synced  Whether to export as a synced theme pattern.
 	 * @return bool True on success, false on failure.
 	 */
-	public function save_pattern_to_file( int $post_id ): bool {
+	public function save_wp_block_pattern_to_file( int $post_id, bool $synced = true ): bool {
 		$post = get_post( $post_id );
-		if ( ! $post || 'btd_pattern' !== $post->post_type ) {
+		if ( ! $post || 'wp_block' !== $post->post_type ) {
 			return false;
 		}
 
-		// Get the active theme's patterns directory
 		$patterns_dir = $this->get_theme_patterns_directory();
-
-		// Create patterns directory if it doesn't exist
 		if ( ! $this->ensure_directory_exists( $patterns_dir ) ) {
 			return false;
 		}
 
-		// Generate file name from post title
-		$file_name = sanitize_title( $post->post_title );
-		if ( empty( $file_name ) ) {
-			$file_name = 'pattern-' . $post_id;
+		$full_slug  = $this->resolve_wp_block_pattern_slug( $post );
+		$short_slug = $this->normalize_pattern_slug( $full_slug );
+		$file_name  = $short_slug !== '' ? $short_slug : ( 'pattern-' . $post_id );
+		$file_path  = $patterns_dir . $file_name . '.php';
+
+		$this->hydrate_wp_block_meta_from_theme_file( $post_id );
+
+		$metadata   = PatternManager::get_pattern_metadata( $post_id );
+		$categories = $this->resolve_wp_block_categories( $post_id, $metadata );
+
+		$metadata['_btd_synced'] = $synced;
+
+		$post_for_export            = clone $post;
+		$post_for_export->post_name = $this->normalize_pattern_slug( $full_slug );
+
+		$file_content = $this->generate_pattern_file_content( $post_for_export, $metadata, $categories, $full_slug );
+
+		$written = $this->write_file( $file_path, $file_content );
+
+		if ( $written && $synced ) {
+			$this->claim_wp_block_for_orbit( $post_id, $full_slug, (string) $post->post_content );
 		}
-		$file_path = "{$patterns_dir}{$file_name}.php";
 
-		// Get pattern metadata
-		$metadata = PatternManager::get_pattern_metadata( $post_id );
+		return $written;
+	}
 
-		// Get pattern categories from metadata
-		$categories = isset( $metadata['_btd_categories'] ) && is_array( $metadata['_btd_categories'] ) ? $metadata['_btd_categories'] : [];
+	/**
+	 * Mark a wp_block as the Orbit-managed post for a theme pattern slug.
+	 *
+	 * Prevents Orbit from inserting a second wp_block after BTD writes the file.
+	 *
+	 * @param int    $post_id      Pattern post ID.
+	 * @param string $full_slug    Theme-namespaced slug.
+	 * @param string $post_content Pattern block markup.
+	 * @return void
+	 */
+	public function claim_wp_block_for_orbit( int $post_id, string $full_slug, string $post_content ): void {
+		$desired_name = sanitize_title( str_replace( '/', '-', $full_slug ) );
+		$post         = get_post( $post_id );
 
-		// Generate PHP file content
-		$file_content = $this->generate_pattern_file_content( $post, $metadata, $categories );
+		if ( ! $post || 'wp_block' !== $post->post_type ) {
+			return;
+		}
 
-		// Write the file
-		return $this->write_file( $file_path, $file_content );
+		update_post_meta( $post_id, '_orbit_theme_pattern_slug', $full_slug );
+		update_post_meta( $post_id, '_orbit_pattern_content_hash', md5( $post_content ) );
+		update_post_meta( $post_id, '_orbit_managed_theme_pattern', '1' );
+		delete_post_meta( $post_id, 'wp_pattern_sync_status' );
+
+		// Trash Orbit duplicates first so renaming to ollie-{slug} does not conflict.
+		$duplicates = get_posts(
+			[
+				'post_type'      => 'wp_block',
+				'post_status'    => [ 'publish', 'draft', 'private' ],
+				'posts_per_page' => 20,
+				'post__not_in'   => [ $post_id ],
+				'meta_query'     => [
+					'relation' => 'AND',
+					[
+						'key'   => '_orbit_managed_theme_pattern',
+						'value' => '1',
+					],
+					[
+						'key'   => '_orbit_theme_pattern_slug',
+						'value' => $full_slug,
+					],
+				],
+			]
+		);
+
+		foreach ( $duplicates as $duplicate ) {
+			wp_trash_post( (int) $duplicate->ID );
+		}
+
+		// Also remove an unmanaged collision on the desired post_name.
+		$name_collision = get_posts(
+			[
+				'post_type'      => 'wp_block',
+				'post_status'    => [ 'publish', 'draft', 'private' ],
+				'name'           => $desired_name,
+				'posts_per_page' => 20,
+				'post__not_in'   => [ $post_id ],
+			]
+		);
+
+		foreach ( $name_collision as $collision ) {
+			$collision_slug = (string) get_post_meta( $collision->ID, '_orbit_theme_pattern_slug', true );
+			if ( '' === $collision_slug || $collision_slug === $full_slug ) {
+				wp_trash_post( (int) $collision->ID );
+			}
+		}
+
+		$post = get_post( $post_id );
+		if ( $post && $post->post_name !== $desired_name ) {
+			wp_update_post(
+				[
+					'ID'        => $post_id,
+					'post_name' => $desired_name,
+				]
+			);
+		}
+	}
+
+	/**
+	 * Resolve the theme-namespaced slug for a wp_block pattern.
+	 *
+	 * @param \WP_Post $post Pattern post.
+	 * @return string
+	 */
+	public function resolve_wp_block_pattern_slug( $post ): string {
+		$orbit_slug = (string) get_post_meta( $post->ID, '_orbit_theme_pattern_slug', true );
+		if ( '' !== $orbit_slug ) {
+			return $orbit_slug;
+		}
+
+		$post_name = ! empty( $post->post_name ) ? (string) $post->post_name : sanitize_title( $post->post_title );
+
+		// Orbit uses ollie-example-synced-pattern style post_names for theme/slug.
+		if ( str_contains( $post_name, '-' ) && ! str_contains( $post_name, '/' ) ) {
+			$theme_slug = $this->get_theme_slug();
+			$prefix     = $theme_slug . '-';
+			if ( str_starts_with( $post_name, $prefix ) ) {
+				$short = substr( $post_name, strlen( $prefix ) );
+				return $theme_slug . '/' . $short;
+			}
+		}
+
+		return $this->build_pattern_slug( $post_name );
+	}
+
+	/**
+	 * Absolute path for a pattern file given a (possibly namespaced) slug.
+	 *
+	 * @param string $slug Pattern slug.
+	 * @return string|null
+	 */
+	public function get_pattern_file_path_for_slug( string $slug ): ?string {
+		$short = $this->normalize_pattern_slug( $slug );
+		if ( '' === $short ) {
+			return null;
+		}
+
+		return $this->get_theme_patterns_directory() . $short . '.php';
+	}
+
+	/**
+	 * Fill empty BTD meta on a wp_block from its theme pattern file headers.
+	 *
+	 * @param int $post_id wp_block post ID.
+	 * @return void
+	 */
+	public function hydrate_wp_block_meta_from_theme_file( int $post_id ): void {
+		$post = get_post( $post_id );
+		if ( ! $post || 'wp_block' !== $post->post_type ) {
+			return;
+		}
+
+		$slug = $this->resolve_wp_block_pattern_slug( $post );
+		$file = $this->get_pattern_file_path_for_slug( $slug );
+
+		if ( ! $file || ! file_exists( $file ) ) {
+			// Orbit-managed patterns should still show as synced in the UI.
+			if ( '1' === (string) get_post_meta( $post_id, '_orbit_managed_theme_pattern', true ) ) {
+				update_post_meta( $post_id, '_btd_synced', true );
+			}
+			return;
+		}
+
+		$headers = get_file_data(
+			$file,
+			[
+				'description'    => 'Description',
+				'categories'     => 'Categories',
+				'keywords'       => 'Keywords',
+				'viewportWidth'  => 'Viewport Width',
+				'blockTypes'     => 'Block Types',
+				'postTypes'      => 'Post Types',
+				'templateTypes'  => 'Template Types',
+				'inserter'       => 'Inserter',
+				'synced'         => 'Synced',
+			]
+		);
+
+		$parse_list = static function ( string $value ): array {
+			$value = trim( $value );
+			if ( '' === $value ) {
+				return [];
+			}
+			return array_values( array_filter( array_map( 'trim', explode( ',', $value ) ) ) );
+		};
+
+		$is_truthy = static function ( $value ): bool {
+			return in_array( strtolower( trim( (string) $value ) ), [ '1', 'true', 'yes' ], true );
+		};
+
+		$current = PatternManager::get_pattern_metadata( $post_id );
+
+		if ( '' === (string) ( $current['_btd_description'] ?? '' ) && '' !== ( $headers['description'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_description', $headers['description'] );
+		}
+
+		// Prefer core's Pattern Categories taxonomy for wp_block; seed from file when empty.
+		if ( '' !== ( $headers['categories'] ?? '' ) && taxonomy_exists( 'wp_pattern_category' ) ) {
+			$existing_terms = wp_get_object_terms( $post_id, 'wp_pattern_category', [ 'fields' => 'ids' ] );
+			if ( empty( $existing_terms ) || is_wp_error( $existing_terms ) ) {
+				$this->assign_wp_pattern_categories( $post_id, $parse_list( $headers['categories'] ) );
+			}
+		}
+
+		if ( empty( $current['_btd_keywords'] ) && '' !== ( $headers['keywords'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_keywords', $parse_list( $headers['keywords'] ) );
+		}
+
+		if ( empty( $current['_btd_block_types'] ) && '' !== ( $headers['blockTypes'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_block_types', $parse_list( $headers['blockTypes'] ) );
+		}
+
+		if ( empty( $current['_btd_post_types'] ) && '' !== ( $headers['postTypes'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_post_types', $parse_list( $headers['postTypes'] ) );
+		}
+
+		if ( empty( $current['_btd_template_types'] ) && '' !== ( $headers['templateTypes'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_template_types', $parse_list( $headers['templateTypes'] ) );
+		}
+
+		if ( '' !== ( $headers['viewportWidth'] ?? '' ) && ( empty( $current['_btd_viewport_width'] ) || 1280 === (int) $current['_btd_viewport_width'] ) ) {
+			update_post_meta( $post_id, '_btd_viewport_width', (int) $headers['viewportWidth'] );
+		}
+
+		if ( '' !== ( $headers['inserter'] ?? '' ) ) {
+			update_post_meta( $post_id, '_btd_inserter', ! in_array( strtolower( $headers['inserter'] ), [ 'no', 'false', '0' ], true ) );
+		}
+
+		if ( $is_truthy( $headers['synced'] ?? '' ) || '1' === (string) get_post_meta( $post_id, '_orbit_managed_theme_pattern', true ) ) {
+			if ( ! $is_truthy( $current['_btd_synced'] ?? false ) ) {
+				update_post_meta( $post_id, '_btd_synced', true );
+			}
+		}
+	}
+
+	/**
+	 * Resolve categories for wp_block export (taxonomy first, then legacy BTD meta).
+	 *
+	 * Native pattern editing uses core's Pattern Categories panel (`wp_pattern_category`).
+	 *
+	 * @param int   $post_id  Post ID.
+	 * @param array $metadata Pattern metadata.
+	 * @return array
+	 */
+	private function resolve_wp_block_categories( int $post_id, array $metadata ): array {
+		if ( taxonomy_exists( 'wp_pattern_category' ) ) {
+			$terms = wp_get_object_terms( $post_id, 'wp_pattern_category', [ 'fields' => 'slugs' ] );
+			if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+				return array_values( $terms );
+			}
+		}
+
+		if ( ! empty( $metadata['_btd_categories'] ) && is_array( $metadata['_btd_categories'] ) ) {
+			return $metadata['_btd_categories'];
+		}
+
+		return [];
+	}
+
+	/**
+	 * Assign wp_pattern_category terms by slug (creating terms when needed).
+	 *
+	 * @param int   $post_id Post ID.
+	 * @param array $slugs   Category slugs from the theme file header.
+	 * @return void
+	 */
+	private function assign_wp_pattern_categories( int $post_id, array $slugs ): void {
+		if ( empty( $slugs ) || ! taxonomy_exists( 'wp_pattern_category' ) ) {
+			return;
+		}
+
+		$term_ids = [];
+
+		foreach ( $slugs as $slug ) {
+			$slug = sanitize_title( $slug );
+			if ( '' === $slug ) {
+				continue;
+			}
+
+			$term = get_term_by( 'slug', $slug, 'wp_pattern_category' );
+			if ( ! $term ) {
+				// Theme headers sometimes use namespaced slugs (e.g. ollie/features).
+				$label = $slug;
+				if ( str_contains( $slug, '/' ) ) {
+					$parts = explode( '/', $slug );
+					$label = (string) end( $parts );
+				}
+
+				$inserted = wp_insert_term(
+					ucwords( str_replace( '-', ' ', $label ) ),
+					'wp_pattern_category',
+					[ 'slug' => $slug ]
+				);
+
+				if ( is_wp_error( $inserted ) ) {
+					continue;
+				}
+
+				$term_ids[] = (int) $inserted['term_id'];
+				continue;
+			}
+
+			$term_ids[] = (int) $term->term_id;
+		}
+
+		if ( ! empty( $term_ids ) ) {
+			wp_set_object_terms( $post_id, $term_ids, 'wp_pattern_category', false );
+		}
 	}
 
 	/**
@@ -199,12 +495,22 @@ class FileOperations {
 
 
 	/**
-	 * Get the active parent theme slug.
+	 * Get patterns directory path for the active stylesheet theme.
+	 *
+	 * @return string The patterns directory path.
+	 */
+	public function get_theme_patterns_directory() {
+		$theme_dir = get_stylesheet_directory();
+		return trailingslashit( $theme_dir . '/patterns' );
+	}
+
+	/**
+	 * Get the active stylesheet theme slug (child theme when present).
 	 *
 	 * @return string Theme slug.
 	 */
 	public function get_theme_slug(): string {
-		return (string) get_template();
+		return (string) get_stylesheet();
 	}
 
 	/**
@@ -273,18 +579,23 @@ class FileOperations {
 	/**
 	 * Generate pattern file content
 	 *
-	 * @param \WP_Post $post The post object.
-	 * @param array    $metadata Pattern metadata.
-	 * @param array    $categories Pattern categories.
+	 * @param \WP_Post    $post        The post object.
+	 * @param array       $metadata    Pattern metadata.
+	 * @param array       $categories  Pattern categories.
+	 * @param string|null $forced_slug Optional full theme/slug override for the Slug header.
 	 * @return string The file content.
 	 */
-	private function generate_pattern_file_content( $post, array $metadata, array $categories ): string {
-		$pattern_slug = ! empty( $post->post_name ) ? (string) $post->post_name : sanitize_title( $post->post_title );
+	private function generate_pattern_file_content( $post, array $metadata, array $categories, ?string $forced_slug = null ): string {
+		$pattern_slug = $forced_slug;
+		if ( null === $pattern_slug || '' === $pattern_slug ) {
+			$pattern_slug = ! empty( $post->post_name ) ? (string) $post->post_name : sanitize_title( $post->post_title );
+			$pattern_slug = $this->build_pattern_slug( $pattern_slug );
+		}
 
 		// Always include core fields
 		$header_parts = [
 			'Title' => $post->post_title,
-			'Slug'  => $this->build_pattern_slug( $pattern_slug ),
+			'Slug'  => $pattern_slug,
 		];
 
 		// Add fields only if they have values (except Inserter and Viewport Width which should always be included)
@@ -315,6 +626,10 @@ class FileOperations {
 		// Always include Viewport Width and Inserter
 		$header_parts['Viewport Width'] = isset( $metadata['_btd_viewport_width'] ) ? (int) $metadata['_btd_viewport_width'] : 1280;
 		$header_parts['Inserter']       = ( isset( $metadata['_btd_inserter'] ) ? $metadata['_btd_inserter'] : true ) ? 'true' : 'false';
+
+		if ( ! empty( $metadata['_btd_synced'] ) ) {
+			$header_parts['Synced'] = 'true';
+		}
 
 		// Build the docblock header
 		$header = "<?php\n/**\n";
@@ -748,16 +1063,6 @@ class FileOperations {
 		if ( defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
 			error_log( '[Block Theme Developer] ' . $message ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		}
-	}
-
-	/**
-	 * Get patterns directory path for active theme
-	 *
-	 * @return string|false The patterns directory path, or false if theme doesn't support patterns.
-	 */
-	public function get_theme_patterns_directory() {
-		$theme_dir = get_template_directory();
-		return trailingslashit( $theme_dir . '/patterns' );
 	}
 
 	/**
