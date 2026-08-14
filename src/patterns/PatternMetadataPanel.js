@@ -24,7 +24,12 @@ function stringArrayToTokens( value ) {
 	if ( Array.isArray( value ) ) {
 		return value;
 	}
-	return value ? value.split( ',' ).map( ( item ) => item.trim() ).filter( Boolean ) : [];
+	return value
+		? value
+				.split( ',' )
+				.map( ( item ) => item.trim() )
+				.filter( Boolean )
+		: [];
 }
 
 /**
@@ -48,7 +53,9 @@ function usePanelBelowPatternCategories( enabled ) {
 		}
 
 		const movePanel = () => {
-			const btdPanel = document.querySelector( '.btd-pattern-details-panel' );
+			const btdPanel = document.querySelector(
+				'.btd-pattern-details-panel'
+			);
 			if ( ! btdPanel?.parentElement ) {
 				return false;
 			}
@@ -59,8 +66,13 @@ function usePanelBelowPatternCategories( enabled ) {
 			);
 
 			const categoriesPanel = siblings.find( ( el ) => {
-				const title = el.querySelector( '.components-panel__body-title' );
-				return title && /pattern categories/i.test( title.textContent || '' );
+				const title = el.querySelector(
+					'.components-panel__body-title'
+				);
+				return (
+					title &&
+					/pattern categories/i.test( title.textContent || '' )
+				);
 			} );
 
 			if ( ! categoriesPanel ) {
@@ -105,7 +117,9 @@ export default function PatternMetadataPanel() {
 	usePanelBelowPatternCategories( isWpBlock );
 
 	const metadata = useSelect( ( select ) => {
-		const meta = select( 'core/editor' ).getEditedPostAttribute( 'meta' ) || {};
+		const meta =
+			select( 'core/editor' ).getEditedPostAttribute( 'meta' ) || {};
+		const post = select( 'core/editor' ).getCurrentPost() || {};
 		return {
 			description: meta._btd_description || '',
 			keywords: meta._btd_keywords || [],
@@ -113,9 +127,10 @@ export default function PatternMetadataPanel() {
 			blockTypes: meta._btd_block_types || [],
 			postTypes: meta._btd_post_types || [],
 			templateTypes: meta._btd_template_types || [],
-			inserter: meta._btd_inserter !== undefined ? meta._btd_inserter : true,
-			contentOnlyLock: meta._btd_content_only_lock !== undefined ? meta._btd_content_only_lock : false,
+			inserter:
+				meta._btd_inserter !== undefined ? meta._btd_inserter : true,
 			synced: meta._btd_synced !== undefined ? meta._btd_synced : false,
+			syncedLocked: !! post.btd_synced_locked,
 		};
 	}, [] );
 
@@ -143,7 +158,10 @@ export default function PatternMetadataPanel() {
 			.then( ( wpTypes ) => {
 				setSuggestions( {
 					postTypes: Object.values( wpTypes )
-						.filter( ( type ) => type.viewable && type.slug !== 'attachment' )
+						.filter(
+							( type ) =>
+								type.viewable && type.slug !== 'attachment'
+						)
 						.map( ( type ) => type.slug ),
 					blockTypes: [],
 					templateTypes: {},
@@ -192,8 +210,13 @@ export default function PatternMetadataPanel() {
 				<TextareaControl
 					label={ __( 'Description', 'block-theme-developer' ) }
 					value={ metadata.description }
-					onChange={ ( value ) => updateMetadata( 'description', value ) }
-					help={ __( 'A brief description of what this pattern does.', 'block-theme-developer' ) }
+					onChange={ ( value ) =>
+						updateMetadata( 'description', value )
+					}
+					help={ __(
+						'A brief description of what this pattern does.',
+						'block-theme-developer'
+					) }
 					__nextHasNoMarginBottom
 				/>
 			</PanelRow>
@@ -204,8 +227,16 @@ export default function PatternMetadataPanel() {
 						id="btd-keywords"
 						label={ __( 'Keywords', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.keywords ) }
-						onChange={ ( tokens ) => updateMetadata( 'keywords', tokensToStringArray( tokens ) ) }
-						help={ __( 'Keywords to help users find this pattern.', 'block-theme-developer' ) }
+						onChange={ ( tokens ) =>
+							updateMetadata(
+								'keywords',
+								tokensToStringArray( tokens )
+							)
+						}
+						help={ __(
+							'Keywords to help users find this pattern.',
+							'block-theme-developer'
+						) }
 						__next40pxDefaultSize
 						__nextHasNoMarginBottom
 					/>
@@ -219,8 +250,16 @@ export default function PatternMetadataPanel() {
 						label={ __( 'Block Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.blockTypes ) }
 						suggestions={ suggestions.blockTypes }
-						onChange={ ( tokens ) => updateMetadata( 'block_types', tokensToStringArray( tokens ) ) }
-						help={ __( 'Select from available block types and template part areas.', 'block-theme-developer' ) }
+						onChange={ ( tokens ) =>
+							updateMetadata(
+								'block_types',
+								tokensToStringArray( tokens )
+							)
+						}
+						help={ __(
+							'Select from available block types and template part areas.',
+							'block-theme-developer'
+						) }
 						__experimentalExpandOnFocus
 						__next40pxDefaultSize
 						__nextHasNoMarginBottom
@@ -235,8 +274,16 @@ export default function PatternMetadataPanel() {
 						label={ __( 'Post Types', 'block-theme-developer' ) }
 						value={ stringArrayToTokens( metadata.postTypes ) }
 						suggestions={ suggestions.postTypes }
-						onChange={ ( tokens ) => updateMetadata( 'post_types', tokensToStringArray( tokens ) ) }
-						help={ __( 'Select from registered post types.', 'block-theme-developer' ) }
+						onChange={ ( tokens ) =>
+							updateMetadata(
+								'post_types',
+								tokensToStringArray( tokens )
+							)
+						}
+						help={ __(
+							'Select from registered post types.',
+							'block-theme-developer'
+						) }
 						__experimentalExpandOnFocus
 						__next40pxDefaultSize
 						__nextHasNoMarginBottom
@@ -248,19 +295,29 @@ export default function PatternMetadataPanel() {
 				<div style={ { width: '100%' } }>
 					<FormTokenField
 						id="btd-template-types"
-						label={ __( 'Template Types', 'block-theme-developer' ) }
-						value={ stringArrayToTokens( metadata.templateTypes ).map( normalizeTemplateTypeToken ) }
+						label={ __(
+							'Template Types',
+							'block-theme-developer'
+						) }
+						value={ stringArrayToTokens(
+							metadata.templateTypes
+						).map( normalizeTemplateTypeToken ) }
 						onChange={ ( tokens ) => {
 							updateMetadata(
 								'template_types',
-								tokensToStringArray( tokens ).map( normalizeTemplateTypeToken )
+								tokensToStringArray( tokens ).map(
+									normalizeTemplateTypeToken
+								)
 							);
 						} }
 						suggestions={ Object.keys( suggestions.templateTypes ) }
 						displayTransform={ ( token ) =>
 							suggestions.templateTypes[ token ]?.title || token
 						}
-						help={ __( 'Template types this pattern is designed for.', 'block-theme-developer' ) }
+						help={ __(
+							'Template types this pattern is designed for.',
+							'block-theme-developer'
+						) }
 						__experimentalExpandOnFocus
 						__next40pxDefaultSize
 						__nextHasNoMarginBottom
@@ -273,8 +330,16 @@ export default function PatternMetadataPanel() {
 					label={ __( 'Viewport Width', 'block-theme-developer' ) }
 					type="number"
 					value={ metadata.viewportWidth }
-					onChange={ ( value ) => updateMetadata( 'viewport_width', parseInt( value, 10 ) || 1200 ) }
-					help={ __( 'Suggested viewport width for displaying this pattern.', 'block-theme-developer' ) }
+					onChange={ ( value ) =>
+						updateMetadata(
+							'viewport_width',
+							parseInt( value, 10 ) || 1200
+						)
+					}
+					help={ __(
+						'Suggested viewport width for displaying this pattern.',
+						'block-theme-developer'
+					) }
 					__next40pxDefaultSize
 					__nextHasNoMarginBottom
 				/>
@@ -284,28 +349,42 @@ export default function PatternMetadataPanel() {
 				<ToggleControl
 					label={ __( 'Show in Inserter', 'block-theme-developer' ) }
 					checked={ metadata.inserter }
-					onChange={ ( value ) => updateMetadata( 'inserter', value ) }
-					help={ __( 'Whether this pattern should appear in the pattern inserter.', 'block-theme-developer' ) }
+					onChange={ ( value ) =>
+						updateMetadata( 'inserter', value )
+					}
+					help={ __(
+						'Whether this pattern should appear in the pattern inserter.',
+						'block-theme-developer'
+					) }
 					__nextHasNoMarginBottom
 				/>
 			</PanelRow>
 
 			<PanelRow>
 				<ToggleControl
-					label={ __( 'Content-only editing', 'block-theme-developer' ) }
-					checked={ metadata.contentOnlyLock }
-					onChange={ ( value ) => updateMetadata( 'content_only_lock', value ) }
-					help={ __( 'Applies templateLock "contentOnly" to the exported pattern file only. The authoring editor stays fully editable.', 'block-theme-developer' ) }
-					__nextHasNoMarginBottom
-				/>
-			</PanelRow>
-
-			<PanelRow>
-				<ToggleControl
-					label={ __( 'Synced theme pattern', 'block-theme-developer' ) }
-					checked={ metadata.synced }
-					onChange={ ( value ) => updateMetadata( 'synced', value ) }
-						help={ __( 'Writes Synced: true to the theme pattern file so Orbit can sync layout updates. When off, the theme file is written without Synced.', 'block-theme-developer' ) }
+					label={ __(
+						'Synced theme pattern',
+						'block-theme-developer'
+					) }
+					checked={ metadata.syncedLocked || metadata.synced }
+					disabled={ metadata.syncedLocked }
+					onChange={ ( value ) => {
+						if ( metadata.syncedLocked ) {
+							return;
+						}
+						updateMetadata( 'synced', value );
+					} }
+					help={
+						metadata.syncedLocked
+							? __(
+									'This pattern is already a synced theme pattern. Existing instances keep a live reference to it, so this cannot be turned off.',
+									'block-theme-developer'
+							  )
+							: __(
+									'Writes Synced: true to the theme pattern file so Orbit can sync layout updates. Once saved, this cannot be turned off.',
+									'block-theme-developer'
+							  )
+					}
 					__nextHasNoMarginBottom
 				/>
 			</PanelRow>

@@ -25,6 +25,7 @@ class PatternManager {
 	 */
 	public function __construct() {
 		add_action( 'init', [ $this, 'register_meta_fields' ] );
+		add_action( 'rest_api_init', [ $this, 'register_rest_fields' ] );
 		add_action( 'enqueue_block_editor_assets', [ $this, 'enqueue_editor_assets' ] );
 	}
 
@@ -53,6 +54,31 @@ class PatternManager {
 	 */
 	public static function on_activation(): void {
 		flush_rewrite_rules();
+	}
+
+	/**
+	 * Register REST fields for wp_block patterns.
+	 *
+	 * @return void
+	 */
+	public function register_rest_fields(): void {
+		register_rest_field(
+			'wp_block',
+			'btd_synced_locked',
+			[
+				'get_callback' => static function ( $object ): bool {
+					$post_id = (int) ( $object['id'] ?? 0 );
+
+					return $post_id > 0 && '1' === (string) get_post_meta( $post_id, '_orbit_managed_theme_pattern', true );
+				},
+				'schema'       => [
+					'description' => __( 'Whether the synced theme pattern setting is locked after Orbit has claimed the pattern.', 'block-theme-developer' ),
+					'type'        => 'boolean',
+					'context'     => [ 'view', 'edit' ],
+					'readonly'    => true,
+				],
+			]
+		);
 	}
 
 	/**
@@ -109,12 +135,6 @@ class PatternManager {
 				'description'  => __( 'Show pattern in inserter', 'block-theme-developer' ),
 				'single'       => true,
 				'default'      => true,
-			],
-			'_btd_content_only_lock' => [
-				'type'         => 'boolean',
-				'description'  => __( 'Apply templateLock contentOnly in exported pattern files', 'block-theme-developer' ),
-				'single'       => true,
-				'default'      => false,
 			],
 			'_btd_synced' => [
 				'type'         => 'boolean',
@@ -333,7 +353,6 @@ class PatternManager {
 			'_btd_post_types'        => [],
 			'_btd_template_types'    => [],
 			'_btd_inserter'          => true,
-			'_btd_content_only_lock' => false,
 			'_btd_synced'            => false,
 		];
 	}

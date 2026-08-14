@@ -60,22 +60,28 @@ class PatternExportManager {
 		$slug = FileOperations::instance()->resolve_wp_block_pattern_slug( $post );
 		$file = FileOperations::instance()->get_pattern_file_path_for_slug( $slug );
 
-		if ( ! $file || ! file_exists( $file ) ) {
-			if ( '1' === (string) get_post_meta( $post->ID, self::ORBIT_MANAGED_META, true ) ) {
-				FileOperations::instance()->hydrate_wp_block_meta_from_theme_file( (int) $post->ID );
-			}
-			return $response;
+		if (
+			( $file && file_exists( $file ) )
+			|| '1' === (string) get_post_meta( $post->ID, self::ORBIT_MANAGED_META, true )
+		) {
+			FileOperations::instance()->hydrate_wp_block_meta_from_theme_file( (int) $post->ID );
 		}
-
-		FileOperations::instance()->hydrate_wp_block_meta_from_theme_file( (int) $post->ID );
 
 		$data = $response->get_data();
 		if ( isset( $data['meta'] ) && is_array( $data['meta'] ) ) {
 			foreach ( array_keys( PatternManager::get_metadata_fields() ) as $meta_key ) {
 				$data['meta'][ $meta_key ] = get_post_meta( $post->ID, $meta_key, true );
 			}
-			$response->set_data( $data );
 		}
+
+		if ( isset( $data['content']['raw'] ) && is_string( $data['content']['raw'] ) ) {
+			$stripped = FileOperations::instance()->strip_content_only_template_lock( $data['content']['raw'] );
+			if ( $stripped !== $data['content']['raw'] ) {
+				$data['content']['raw'] = $stripped;
+			}
+		}
+
+		$response->set_data( $data );
 
 		return $response;
 	}
@@ -206,6 +212,10 @@ class PatternExportManager {
 
 	/**
 	 * Whether this wp_block should export as a synced theme pattern.
+	 *
+	 * Once Orbit has claimed the wp_block, synced is permanent. Existing
+	 * page instances store a core/block ref; un-syncing would leave those
+	 * refs in place and re-register a duplicate unsynced theme pattern.
 	 *
 	 * @param \WP_Post $post Post object.
 	 * @return bool

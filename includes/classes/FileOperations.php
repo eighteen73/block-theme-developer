@@ -645,26 +645,25 @@ class FileOperations {
 
 		$header .= " */\n\n";
 
-		$should_apply_content_only_lock = ! empty( $metadata['_btd_content_only_lock'] );
-
-		// Add the pattern content and apply contentOnly lock at file export boundary when requested.
-		$export_content = $this->apply_content_only_template_lock(
-			(string) $post->post_content,
-			$should_apply_content_only_lock
-		);
-		$content = $this->format_exported_block_content( $export_content );
+		// WordPress 7.0 applies content-only behaviour on insert. Keep the
+		// source pattern unlocked so Appearance → Editor stays fully editable.
+		$export_content = $this->strip_content_only_template_lock( (string) $post->post_content );
+		$content        = $this->format_exported_block_content( $export_content );
 
 		return $header . "?>\n" . $content;
 	}
 
 	/**
-	 * Apply or remove templateLock contentOnly on the first supported top-level container block.
+	 * Remove templateLock contentOnly from pattern markup.
 	 *
 	 * @param string $content Pattern block markup content.
-	 * @param bool   $should_apply Whether to apply or remove contentOnly lock.
 	 * @return string Updated content.
 	 */
-	private function apply_content_only_template_lock( string $content, bool $should_apply ): string {
+	public function strip_content_only_template_lock( string $content ): string {
+		if ( false === strpos( $content, 'templateLock' ) || false === strpos( $content, 'contentOnly' ) ) {
+			return $content;
+		}
+
 		if ( false === strpos( $content, '<!-- wp:' ) ) {
 			return $content;
 		}
@@ -674,39 +673,7 @@ class FileOperations {
 			return $content;
 		}
 
-		$found_supported_block = false;
-		$changed               = false;
-
-		foreach ( $blocks as $index => $block ) {
-			$block_name = $block['blockName'] ?? null;
-			if ( ! $this->is_supported_template_lock_container( $block_name ) ) {
-				continue;
-			}
-
-			$found_supported_block = true;
-			$attrs                 = isset( $blocks[ $index ]['attrs'] ) && is_array( $blocks[ $index ]['attrs'] ) ? $blocks[ $index ]['attrs'] : [];
-			$current_template_lock = $attrs['templateLock'] ?? null;
-
-			if ( $should_apply ) {
-				if ( 'contentOnly' !== $current_template_lock ) {
-					$attrs['templateLock'] = 'contentOnly';
-					$changed               = true;
-				}
-			} elseif ( 'contentOnly' === $current_template_lock ) {
-				unset( $attrs['templateLock'] );
-				$changed = true;
-			}
-
-			$blocks[ $index ]['attrs'] = $attrs;
-			break;
-		}
-
-		if ( $should_apply && ! $found_supported_block ) {
-			$this->log( 'Skipping templateLock contentOnly export transform: no supported top-level container block found.' );
-			return $content;
-		}
-
-		if ( ! $changed ) {
+		if ( ! $this->strip_content_only_from_blocks( $blocks ) ) {
 			return $content;
 		}
 
@@ -714,23 +681,29 @@ class FileOperations {
 	}
 
 	/**
-	 * Whether a block supports templateLock contentOnly.
+	 * Recursively unset contentOnly templateLock attributes.
 	 *
-	 * @param string|null $block_name Parsed block name.
-	 * @return bool
+	 * @param array $blocks Parsed blocks.
+	 * @return bool Whether any block was changed.
 	 */
-	private function is_supported_template_lock_container( ?string $block_name ): bool {
-		return in_array(
-			$block_name,
-			[
-				'core/group',
-				'core/cover',
-				'core/columns',
-				'core/column',
-				'core/navigation',
-			],
-			true
-		);
+	private function strip_content_only_from_blocks( array &$blocks ): bool {
+		$changed = false;
+
+		foreach ( $blocks as &$block ) {
+			$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
+
+			if ( isset( $attrs['templateLock'] ) && 'contentOnly' === $attrs['templateLock'] ) {
+				unset( $attrs['templateLock'] );
+				$block['attrs'] = $attrs;
+				$changed        = true;
+			}
+
+			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$changed = $this->strip_content_only_from_blocks( $block['innerBlocks'] ) || $changed;
+			}
+		}
+
+		return $changed;
 	}
 
 	/**
