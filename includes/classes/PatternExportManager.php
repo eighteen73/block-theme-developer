@@ -20,6 +20,13 @@ class PatternExportManager {
 	private const ORBIT_MANAGED_META = '_orbit_managed_theme_pattern';
 
 	/**
+	 * Prevent re-entrant file removal for the same post.
+	 *
+	 * @var array<int, true>
+	 */
+	private static array $removing_pattern_ids = [];
+
+	/**
 	 * Initialize hooks.
 	 */
 	public function __construct() {
@@ -31,6 +38,10 @@ class PatternExportManager {
 		add_action( 'save_post_wp_block', [ $this, 'handle_pattern_save' ], 20, 3 );
 		add_action( 'rest_after_insert_wp_block', [ $this, 'handle_pattern_save_rest' ], 10, 3 );
 		add_filter( 'rest_prepare_wp_block', [ $this, 'hydrate_btd_meta_in_rest' ], 10, 3 );
+		add_action( 'trashed_post', [ $this, 'handle_pattern_removal' ] );
+		add_action( 'before_delete_post', [ $this, 'handle_pattern_removal' ] );
+		// After core theme pattern registration (10) and Orbit synced upsert (20).
+		add_action( 'init', [ $this, 'sync_unsynced_theme_patterns' ], 21 );
 	}
 
 	/**
@@ -87,6 +98,124 @@ class PatternExportManager {
 	}
 
 	/**
+	 * Import unsynced theme pattern files into editable wp_block posts.
+	 *
+	 * @return void
+	 */
+	public function sync_unsynced_theme_patterns(): void {
+		FileOperations::instance()->sync_unsynced_theme_patterns();
+	}
+
+	/**
+	 * Remove the theme pattern file when the last matching wp_block is deleted.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return void
+	 */
+	public function handle_pattern_removal( int $post_id ): void {
+		if ( isset( self::$removing_pattern_ids[ $post_id ] ) ) {
+			return;
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post || 'wp_block' !== $post->post_type ) {
+			return;
+		}
+
+		if ( ! current_user_can( 'edit_theme_options' ) ) {
+			return;
+		}
+
+		if ( wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+
+		$slug = FileOperations::instance()->resolve_wp_block_pattern_slug( $post );
+		if ( '' === $slug || $this->pattern_has_remaining_post( $post_id, $slug ) ) {
+			return;
+		}
+
+		self::$removing_pattern_ids[ $post_id ] = true;
+
+		FileOperations::instance()->delete_pattern_file_for_post( $post_id );
+		$this->clear_orbit_sync_cache();
+	}
+
+	/**
+	 * Whether another live wp_block still represents this theme pattern slug.
+	 *
+	 * @param int    $post_id   Post being removed.
+	 * @param string $full_slug Theme-namespaced pattern slug.
+	 * @return bool
+	 */
+	private function pattern_has_remaining_post( int $post_id, string $full_slug ): bool {
+		$query_args = [
+			'post_type'              => 'wp_block',
+			'post_status'            => [ 'publish', 'draft', 'private', 'pending' ],
+			'post__not_in'           => [ $post_id ],
+			'posts_per_page'         => 1,
+			'fields'                 => 'ids',
+			'no_found_rows'          => true,
+			'ignore_sticky_posts'    => true,
+			'update_post_meta_cache' => false,
+			'update_post_term_cache' => false,
+		];
+
+		$by_meta = get_posts(
+			array_merge(
+				$query_args,
+				[
+					'meta_query' => [
+						'relation' => 'OR',
+						[
+							'key'   => FileOperations::META_THEME_SLUG,
+							'value' => $full_slug,
+						],
+						[
+							'key'   => '_orbit_theme_pattern_slug',
+							'value' => $full_slug,
+						],
+					],
+				]
+			)
+		);
+
+		if ( ! empty( $by_meta ) ) {
+			return true;
+		}
+
+		$file_ops = FileOperations::instance();
+		$short    = $file_ops->normalize_pattern_slug( $full_slug );
+		$names    = array_values(
+			array_unique(
+				array_filter(
+					[
+						$short,
+						$file_ops->get_theme_slug() . '-' . $short,
+					]
+				)
+			)
+		);
+
+		foreach ( $names as $post_name ) {
+			$by_name = get_posts(
+				array_merge(
+					$query_args,
+					[
+						'name' => $post_name,
+					]
+				)
+			);
+
+			if ( ! empty( $by_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * Handle classic save_post for wp_block.
 	 *
 	 * @param int      $post_id Post ID.
@@ -130,6 +259,10 @@ class PatternExportManager {
 	 * @return void
 	 */
 	private function process_pattern_save( int $post_id, $post, bool $creating ): void {
+		if ( FileOperations::instance()->is_syncing_from_files() ) {
+			return;
+		}
+
 		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
 			return;
 		}
@@ -225,8 +358,8 @@ class PatternExportManager {
 			return true;
 		}
 
-		if ( $this->is_truthy( get_post_meta( $post->ID, '_btd_synced', true ) ) ) {
-			return true;
+		if ( metadata_exists( 'post', $post->ID, '_btd_synced' ) ) {
+			return $this->is_truthy( get_post_meta( $post->ID, '_btd_synced', true ) );
 		}
 
 		// Core: empty wp_pattern_sync_status = synced; "unsynced" = not.

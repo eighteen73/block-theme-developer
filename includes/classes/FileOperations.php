@@ -17,11 +17,28 @@ class FileOperations {
 	use Singleton;
 
 	/**
+	 * Post meta: theme-namespaced slug for a BTD-authored pattern file.
+	 */
+	public const META_THEME_SLUG = '_btd_theme_pattern_slug';
+
+	/**
+	 * Post meta: md5 of the last theme pattern file contents written or imported.
+	 */
+	public const META_FILE_HASH = '_btd_pattern_file_hash';
+
+	/**
 	 * Cached theme package tag from functions.php.
 	 *
 	 * @var string|null|false Null when uncached, false when not found, string when found.
 	 */
 	private static $theme_package_tag = null;
+
+	/**
+	 * Whether theme files are currently being imported into wp_block posts.
+	 *
+	 * @var bool
+	 */
+	private static bool $syncing_from_files = false;
 
 	/**
 	 * Initialize the class
@@ -70,11 +87,478 @@ class FileOperations {
 
 		$written = $this->write_file( $file_path, $file_content );
 
+		if ( $written ) {
+			update_post_meta( $post_id, self::META_THEME_SLUG, $full_slug );
+			update_post_meta( $post_id, self::META_FILE_HASH, md5( $file_content ) );
+		}
+
 		if ( $written && $synced ) {
 			$this->claim_wp_block_for_orbit( $post_id, $full_slug, (string) $post->post_content );
 		}
 
 		return $written;
+	}
+
+	/**
+	 * Whether wp_block posts are being created/updated from theme pattern files.
+	 *
+	 * @return bool
+	 */
+	public function is_syncing_from_files(): bool {
+		return self::$syncing_from_files;
+	}
+
+	/**
+	 * Keep unsynced theme pattern files editable as wp_block posts.
+	 *
+	 * Creates missing posts after a database import, updates posts when the
+	 * theme file changes, and unregisters the locked theme-registry copy.
+	 *
+	 * @return void
+	 */
+	public function sync_unsynced_theme_patterns(): void {
+		if ( self::$syncing_from_files ) {
+			return;
+		}
+
+		$registry = \WP_Block_Patterns_Registry::get_instance();
+
+		foreach ( $this->get_theme_pattern_files() as $file ) {
+			$pattern = $this->parse_theme_pattern_file( $file );
+
+			if ( ! $pattern ) {
+				continue;
+			}
+
+			$post_id = $this->ensure_unsynced_pattern_post( $pattern );
+
+			if ( $post_id && $registry->is_registered( $pattern['slug'] ) ) {
+				$registry->unregister( $pattern['slug'] );
+			}
+		}
+	}
+
+	/**
+	 * Parse an unsynced theme pattern PHP file.
+	 *
+	 * Synced files are left to Orbit.
+	 *
+	 * @param string $file Absolute path.
+	 * @return array<string, mixed>|null
+	 */
+	public function parse_theme_pattern_file( string $file ): ?array {
+		$headers = get_file_data(
+			$file,
+			[
+				'title'         => 'Title',
+				'slug'          => 'Slug',
+				'description'   => 'Description',
+				'viewportWidth' => 'Viewport Width',
+				'inserter'      => 'Inserter',
+				'categories'    => 'Categories',
+				'keywords'      => 'Keywords',
+				'blockTypes'    => 'Block Types',
+				'postTypes'     => 'Post Types',
+				'templateTypes' => 'Template Types',
+				'synced'        => 'Synced',
+			]
+		);
+
+		if ( $this->is_header_truthy( $headers['synced'] ?? '' ) ) {
+			return null;
+		}
+
+		if ( empty( $headers['slug'] ) || empty( $headers['title'] ) ) {
+			return null;
+		}
+
+		$content = $this->render_pattern_file( $file );
+
+		if ( '' === trim( $content ) ) {
+			return null;
+		}
+
+		$pattern = [
+			'title'   => $headers['title'],
+			'slug'    => $headers['slug'],
+			'content' => $content,
+			'file'    => $file,
+		];
+
+		if ( ! empty( $headers['description'] ) ) {
+			$pattern['description'] = $headers['description'];
+		}
+
+		if ( ! empty( $headers['viewportWidth'] ) ) {
+			$pattern['viewportWidth'] = (int) $headers['viewportWidth'];
+		}
+
+		$pattern['inserter'] = ! in_array( strtolower( (string) $headers['inserter'] ), [ 'no', 'false', '0' ], true );
+
+		foreach ( [ 'categories', 'keywords', 'blockTypes', 'postTypes', 'templateTypes' ] as $list_key ) {
+			if ( empty( $headers[ $list_key ] ) ) {
+				continue;
+			}
+
+			$pattern[ $list_key ] = array_values(
+				array_filter( array_map( 'trim', explode( ',', $headers[ $list_key ] ) ) )
+			);
+		}
+
+		return $pattern;
+	}
+
+	/**
+	 * Create or update the wp_block for an unsynced theme pattern file.
+	 *
+	 * @param array<string, mixed> $pattern Parsed pattern data.
+	 * @return int Post ID, or 0 on failure.
+	 */
+	public function ensure_unsynced_pattern_post( array $pattern ): int {
+		$post      = $this->find_unsynced_pattern_post( (string) $pattern['slug'] );
+		$file_hash = is_readable( $pattern['file'] ) ? (string) md5_file( $pattern['file'] ) : '';
+
+		self::$syncing_from_files = true;
+
+		try {
+			if ( $post instanceof \WP_Post ) {
+				if ( $this->is_orbit_managed_post( (int) $post->ID ) ) {
+					$this->unclaim_orbit_managed_post( (int) $post->ID );
+				}
+
+				$stored_hash = (string) get_post_meta( $post->ID, self::META_FILE_HASH, true );
+
+				if ( '' !== $file_hash && $stored_hash === $file_hash ) {
+					update_post_meta( $post->ID, self::META_THEME_SLUG, $pattern['slug'] );
+					update_post_meta( $post->ID, 'wp_pattern_sync_status', 'unsynced' );
+					update_post_meta( $post->ID, '_btd_synced', false );
+					delete_post_meta( $post->ID, '_orbit_managed_theme_pattern' );
+					delete_post_meta( $post->ID, '_orbit_pattern_content_hash' );
+					$this->hydrate_wp_block_meta_from_theme_file( (int) $post->ID );
+					$this->trash_duplicate_unsynced_posts( (string) $pattern['slug'], (int) $post->ID );
+					return (int) $post->ID;
+				}
+
+				$updated = wp_update_post(
+					[
+						'ID'           => $post->ID,
+						'post_title'   => $pattern['title'],
+						'post_content' => $pattern['content'],
+						'post_status'  => 'publish',
+					],
+					true
+				);
+
+				if ( is_wp_error( $updated ) ) {
+					return 0;
+				}
+
+				$this->apply_unsynced_pattern_meta( (int) $post->ID, $pattern, $file_hash );
+				$this->trash_duplicate_unsynced_posts( (string) $pattern['slug'], (int) $post->ID );
+
+				return (int) $post->ID;
+			}
+
+			$post_id = wp_insert_post(
+				[
+					'post_title'     => $pattern['title'],
+					'post_name'      => $this->normalize_pattern_slug( (string) $pattern['slug'] ),
+					'post_content'   => $pattern['content'],
+					'post_type'      => 'wp_block',
+					'post_status'    => 'publish',
+					'comment_status' => 'closed',
+					'ping_status'    => 'closed',
+					'meta_input'     => [
+						'wp_pattern_sync_status' => 'unsynced',
+						'_btd_synced'            => false,
+						self::META_THEME_SLUG    => $pattern['slug'],
+						self::META_FILE_HASH     => $file_hash,
+					],
+				],
+				true
+			);
+
+			if ( is_wp_error( $post_id ) || ! $post_id ) {
+				return 0;
+			}
+
+			$this->apply_unsynced_pattern_meta( (int) $post_id, $pattern, $file_hash );
+			$this->trash_duplicate_unsynced_posts( (string) $pattern['slug'], (int) $post_id );
+
+			return (int) $post_id;
+		} finally {
+			self::$syncing_from_files = false;
+		}
+	}
+
+	/**
+	 * Delete the theme pattern file for a wp_block.
+	 *
+	 * @param int $post_id wp_block post ID.
+	 * @return bool True when a file was deleted.
+	 */
+	public function delete_pattern_file_for_post( int $post_id ): bool {
+		$post = get_post( $post_id );
+		if ( ! $post || 'wp_block' !== $post->post_type ) {
+			return false;
+		}
+
+		$slug = $this->resolve_wp_block_pattern_slug( $post );
+		$file = $this->get_pattern_file_path_for_slug( $slug );
+
+		return $this->delete_pattern_file( $file );
+	}
+
+	/**
+	 * Delete a pattern PHP file when it belongs to the active theme patterns directory.
+	 *
+	 * @param string|null $file_path Absolute file path.
+	 * @return bool True when a file was deleted.
+	 */
+	public function delete_pattern_file( ?string $file_path ): bool {
+		if ( ! $file_path || ! is_file( $file_path ) ) {
+			return false;
+		}
+
+		$patterns_dir = realpath( $this->get_theme_patterns_directory() );
+		$real_file    = realpath( $file_path );
+
+		if ( ! $patterns_dir || ! $real_file || ! str_starts_with( $real_file, $patterns_dir . DIRECTORY_SEPARATOR ) ) {
+			return false;
+		}
+
+		wp_delete_file( $real_file );
+
+		$deleted = ! file_exists( $real_file );
+
+		if ( $deleted ) {
+			$this->log( sprintf( 'Deleted theme pattern file %s.', $real_file ) );
+		}
+
+		return $deleted;
+	}
+
+	/**
+	 * Find an existing unsynced wp_block for a theme pattern slug.
+	 *
+	 * @param string $slug Theme pattern slug.
+	 * @return \WP_Post|null
+	 */
+	private function find_unsynced_pattern_post( string $slug ): ?\WP_Post {
+		$by_meta = get_posts(
+			[
+				'post_type'              => 'wp_block',
+				'post_status'            => [ 'publish', 'draft', 'private' ],
+				'posts_per_page'         => 1,
+				'no_found_rows'          => true,
+				'ignore_sticky_posts'    => true,
+				'update_post_term_cache' => false,
+				'meta_key'               => self::META_THEME_SLUG,
+				'meta_value'             => $slug,
+			]
+		);
+
+		if ( ! empty( $by_meta[0] ) && $by_meta[0] instanceof \WP_Post ) {
+			return $by_meta[0];
+		}
+
+		$short = $this->normalize_pattern_slug( $slug );
+		$names = array_values(
+			array_unique(
+				array_filter(
+					[
+						$short,
+						$this->get_theme_slug() . '-' . $short,
+						sanitize_title( str_replace( '/', '-', $slug ) ),
+					]
+				)
+			)
+		);
+
+		foreach ( $names as $post_name ) {
+			$by_name = get_posts(
+				[
+					'post_type'              => 'wp_block',
+					'post_status'            => [ 'publish', 'draft', 'private' ],
+					'name'                   => $post_name,
+					'posts_per_page'         => 1,
+					'no_found_rows'          => true,
+					'ignore_sticky_posts'    => true,
+					'update_post_term_cache' => false,
+				]
+			);
+
+			if ( empty( $by_name[0] ) || ! $by_name[0] instanceof \WP_Post ) {
+				continue;
+			}
+
+			$existing_slug = (string) get_post_meta( $by_name[0]->ID, self::META_THEME_SLUG, true );
+			if ( '' !== $existing_slug && $existing_slug !== $slug ) {
+				continue;
+			}
+
+			return $by_name[0];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Trash extra wp_block posts for the same unsynced theme pattern.
+	 *
+	 * @param string $slug    Theme pattern slug.
+	 * @param int    $keep_id Post ID to keep.
+	 * @return void
+	 */
+	private function trash_duplicate_unsynced_posts( string $slug, int $keep_id ): void {
+		$short = $this->normalize_pattern_slug( $slug );
+		$theme = $this->get_theme_slug();
+		$ids   = [];
+
+		$queries = [
+			[
+				'meta_key'   => self::META_THEME_SLUG,
+				'meta_value' => $slug,
+			],
+			[
+				'meta_key'   => self::META_THEME_SLUG,
+				'meta_value' => $theme . '/' . $short,
+			],
+			[
+				'name' => $short,
+			],
+			[
+				'name' => $theme . '-' . $short,
+			],
+			[
+				'name' => sanitize_title( str_replace( '/', '-', $slug ) ),
+			],
+		];
+
+		foreach ( $queries as $query ) {
+			$found = get_posts(
+				array_merge(
+					[
+						'post_type'              => 'wp_block',
+						'post_status'            => [ 'publish', 'draft', 'private' ],
+						'posts_per_page'         => 20,
+						'post__not_in'           => [ $keep_id ],
+						'fields'                 => 'ids',
+						'no_found_rows'          => true,
+						'ignore_sticky_posts'    => true,
+						'update_post_meta_cache' => false,
+						'update_post_term_cache' => false,
+					],
+					$query
+				)
+			);
+
+			$ids = array_merge( $ids, $found );
+		}
+
+		foreach ( array_unique( array_map( 'intval', $ids ) ) as $duplicate_id ) {
+			if ( $duplicate_id === $keep_id ) {
+				continue;
+			}
+
+			wp_trash_post( $duplicate_id );
+		}
+	}
+
+	/**
+	 * Store BTD meta for an unsynced theme pattern wp_block.
+	 *
+	 * @param int                  $post_id   Post ID.
+	 * @param array<string, mixed> $pattern   Parsed pattern data.
+	 * @param string               $file_hash md5 of the theme file.
+	 * @return void
+	 */
+	private function apply_unsynced_pattern_meta( int $post_id, array $pattern, string $file_hash ): void {
+		update_post_meta( $post_id, self::META_THEME_SLUG, $pattern['slug'] );
+		update_post_meta( $post_id, 'wp_pattern_sync_status', 'unsynced' );
+		update_post_meta( $post_id, '_btd_synced', false );
+		delete_post_meta( $post_id, '_orbit_managed_theme_pattern' );
+		delete_post_meta( $post_id, '_orbit_pattern_content_hash' );
+
+		if ( '' !== $file_hash ) {
+			update_post_meta( $post_id, self::META_FILE_HASH, $file_hash );
+		}
+
+		if ( isset( $pattern['inserter'] ) ) {
+			update_post_meta( $post_id, '_btd_inserter', (bool) $pattern['inserter'] );
+		}
+
+		if ( ! empty( $pattern['description'] ) ) {
+			update_post_meta( $post_id, '_btd_description', $pattern['description'] );
+		}
+
+		if ( ! empty( $pattern['viewportWidth'] ) ) {
+			update_post_meta( $post_id, '_btd_viewport_width', (int) $pattern['viewportWidth'] );
+		}
+
+		if ( ! empty( $pattern['keywords'] ) ) {
+			update_post_meta( $post_id, '_btd_keywords', $pattern['keywords'] );
+		}
+
+		if ( ! empty( $pattern['blockTypes'] ) ) {
+			update_post_meta( $post_id, '_btd_block_types', $pattern['blockTypes'] );
+		}
+
+		if ( ! empty( $pattern['postTypes'] ) ) {
+			update_post_meta( $post_id, '_btd_post_types', $pattern['postTypes'] );
+		}
+
+		if ( ! empty( $pattern['templateTypes'] ) ) {
+			update_post_meta( $post_id, '_btd_template_types', $pattern['templateTypes'] );
+		}
+
+		if ( ! empty( $pattern['categories'] ) && is_array( $pattern['categories'] ) ) {
+			$this->assign_wp_pattern_categories( $post_id, $pattern['categories'] );
+		}
+	}
+
+	/**
+	 * Whether a wp_block is owned by Orbit as a synced theme pattern.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	private function is_orbit_managed_post( int $post_id ): bool {
+		return '1' === (string) get_post_meta( $post_id, '_orbit_managed_theme_pattern', true );
+	}
+
+	/**
+	 * Drop an accidental Orbit claim so an unsynced theme file stays editable.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return void
+	 */
+	private function unclaim_orbit_managed_post( int $post_id ): void {
+		delete_post_meta( $post_id, '_orbit_managed_theme_pattern' );
+		delete_post_meta( $post_id, '_orbit_pattern_content_hash' );
+	}
+
+	/**
+	 * Render pattern file content (supports PHP in pattern files).
+	 *
+	 * @param string $file Absolute path.
+	 * @return string
+	 */
+	private function render_pattern_file( string $file ): string {
+		ob_start();
+		// phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable -- Theme pattern path from stylesheet directory.
+		include $file;
+		return (string) ob_get_clean();
+	}
+
+	/**
+	 * Whether a pattern file header value is truthy.
+	 *
+	 * @param string $value Header value.
+	 * @return bool
+	 */
+	private function is_header_truthy( string $value ): bool {
+		return in_array( strtolower( trim( $value ) ), [ '1', 'true', 'yes' ], true );
 	}
 
 	/**
@@ -164,6 +648,11 @@ class FileOperations {
 		$orbit_slug = (string) get_post_meta( $post->ID, '_orbit_theme_pattern_slug', true );
 		if ( '' !== $orbit_slug ) {
 			return $orbit_slug;
+		}
+
+		$btd_slug = (string) get_post_meta( $post->ID, self::META_THEME_SLUG, true );
+		if ( '' !== $btd_slug ) {
+			return $btd_slug;
 		}
 
 		$post_name = ! empty( $post->post_name ) ? (string) $post->post_name : sanitize_title( $post->post_title );
